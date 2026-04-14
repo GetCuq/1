@@ -113,22 +113,20 @@ return view.extend({
 
         /* ── Форма UCI ──────────────────────────────────────── */
         var m = new form.Map('olcrtc',
-            'OlcRTC',
-            'Управление SOCKS5-клиентом OlcRTC. ' +
-            'Tunneling через WebRTC-провайдеров для обхода блокировок.');
+            'OlcRTC');
 
         var s = m.section(form.NamedSection, 'config', 'olcrtc', 'Настройки подключения');
         s.anonymous = true;
 
         /* Провайдер */
         var o = s.option(form.ListValue, 'provider', 'Провайдер');
-        o.value('telemost', 'Telemost (VK Teams)');
-        o.value('jazz',     'Jazz (Sber)');
+        o.value('telemost', 'telemost.yandex.ru');
+        o.value('jazz',     'salutejazz.ru');
         o.default = 'telemost';
 
         /* Room ID */
         o = s.option(form.Value, 'room_id', 'Room ID',
-            'Идентификатор комнаты. Для Telemost — числовой, для Jazz — вида user:roomcode');
+            'Идентификатор комнаты');
         o.placeholder = 'Например: 49286587700808';
         o.rmempty = false;
 
@@ -211,7 +209,7 @@ return view.extend({
                     E('summary', {
                         style: 'cursor:pointer;font-weight:bold;font-size:1em;' +
                                'padding:4px 0;user-select:none;'
-                    }, '📋 Логи (logread | grep olcrtc)'),
+                    }, '📋 Логи'),
                     E('div', { style: 'margin-top:8px;' }, logsContent)
                 ])
             ]);
