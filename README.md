@@ -142,7 +142,7 @@ git clone https://github.com/openlibrecommunity/olcrtc
 cd olcrtc
 ```
 
-4) Скомпилируйте (команды для Linux/Microsoft PowerShell):
+3) Скомпилируйте (команды для Linux/Microsoft PowerShell):
 
 mips big-endian (некоторые Mikrotik, Netgear)
 ```
