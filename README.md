@@ -47,19 +47,6 @@ OlcRTC запускается на роутере как SOCKS5-прокси.
 sh -c "$(wget -qO- https://raw.githubusercontent.com/tankionline2005/OlcRTC-OpenWRT/main/install.sh)"
 ```
 
-
-## Настройка через UCI (хз зачем)
-
-```sh
-uci set olcrtc.config.provider='telemost'
-uci set olcrtc.config.room_id='49286587700808'
-uci set olcrtc.config.key='e5265a924657a8807dcef7a7b8e89562ca4d070d6ac4fcdd313897900d71ba6a'
-uci set olcrtc.config.socks_port='1080'
-uci set olcrtc.config.enabled='1'
-uci commit olcrtc
-/etc/init.d/olcrtc restart
-```
-
 ---
 
 ## Использование прокси
@@ -121,7 +108,7 @@ OlcRTC-OpenWRT/
 ---
 ## Как скомпилировать?
 
-1) Определите архитектуру своего роутера.
+Определите архитектуру своего роутера.
 Подключитесь к роутеру по SSH и выполните:
 ```
 shcat /proc/cpuinfo | grep cpu | head -1
@@ -131,18 +118,27 @@ uname -m
 В большинстве случаев всё сразу становится понятно:
 
 mips (big-endian) — mips
+
 mipsle / mips32le — mipsle
+
 aarch64 / arm64 — arm64
+
 armv7 — arm + GOARM=7
+
 x86_64 — amd64
 
-2) Скачайте репозиторий OlcRTC
+---
+
+Скачайте репозиторий OlcRTC
 ```
 git clone https://github.com/openlibrecommunity/olcrtc
 cd olcrtc
 ```
 
-3) Скомпилируйте (команды для Linux/Microsoft PowerShell):
+---
+
+Скомпилируйте (команды для Linux/Microsoft PowerShell):
+
 
 mips big-endian (некоторые Mikrotik, Netgear)
 ```
