@@ -1,0 +1,6 @@
+config olcrtc 'config'
+	option provider 'telemost'
+	option room_id ''
+	option key ''
+	option socks_port '1080'
+	option enabled '0'
