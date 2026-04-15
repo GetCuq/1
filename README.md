@@ -20,7 +20,7 @@ OlcRTC запускается на роутере как SOCKS5-прокси.
 
 - Выбор провайдера: **Telemost** или **Jazz**
 - Ввод Room ID, ключа и SOCKS5-порта
-- Кнопки **Старт / Перезапуск** и **Стоп**
+- Кнопки **Старт** и **Стоп**
 - Индикатор статуса с PID
 - Отображение логов
 - Настройки сохраняются через UCI (`/etc/config/olcrtc`)
@@ -34,11 +34,12 @@ OlcRTC запускается на роутере как SOCKS5-прокси.
 - Архитектура: **ARM64** (aarch64) — например, роутер Cudy WR3000S
 - Свободное место: 10 МБ
 
-> Если у вас другая архитектура — соберите бинарник самостоятельно из [исходников OlcRTC](https://github.com/openlibrecommunity/olcrtc), ниже будет описано как это сделать
+> Если у вас другая архитектура — соберите бинарник самостоятельно из [исходников OlcRTC](https://github.com/openlibrecommunity/olcrtc), ниже будет описано как это сделать.
 
+- Удалённый VPS сервер на Linux для запуска OlcRTC сервера (Ниже будет описано как запустить OlcRTC на своём Linux VPS)
 ---
 
-## Установка
+## Установка клиента на роутер
 
 Подключитесь к роутеру по SSH и выполните:
 
@@ -84,28 +85,7 @@ rm -rf /www/luci-static/resources/view/olcrtc
 ```
 
 ---
-
-## Структура проекта
-
-```
-OlcRTC-OpenWRT/
-├── README.md
-├── install.sh                   # Установочный скрипт
-├── uninstall.sh                 # Скрипт удаления
-├── olcrtc-linux-arm64           # Скомпилированный бинарник, рекомендуется скомпилировать самостоятельно из исходников OlcRTC, а не слепо доверять мне =)
-└── files/
-    ├── etc/
-    │   ├── config/olcrtc        # UCI конфиг по умолчанию
-    │   └── init.d/olcrtc        # Сервисный скрипт (procd)
-    ├── usr/share/
-    │   ├── luci/menu.d/         # Пункт меню LuCI
-    │   └── rpcd/acl.d/          # Права доступа
-    └── www/luci-static/
-        └── resources/view/olcrtc/main.js  # Веб-интерфейс
-```
-
----
-## Как скомпилировать?
+## Как скомпилировать под свой роутер?
 
 Определите архитектуру своего роутера.
 Подключитесь к роутеру по SSH и выполните:
@@ -167,7 +147,28 @@ GOOS=linux GOARCH=arm GOARM=7 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" 
 $env:GOOS="linux"; $env:GOARCH="arm"; $env:GOARM="7"; $env:CGO_ENABLED="0"; go build -trimpath -ldflags="-s -w" -o build/olcrtc-linux-armv7 ./cmd/olcrtc
 ```
 ---
+## Как запустить OlcRTC на своём Linux VPS ?
+Клонируйте репозиторий:
+```
+git clone https://github.com/openlibrecommunity/olcrtc
+cd olcrtc
+```
+Запускайте:
+Вариант А - через Podman, проще всего (Но каждый раз нужно долго ждать):
+```
+./script/srv.sh
+```
+Вариант Б - собрать нативно. Рекомендуется, т.к. ждать придётся только один раз при сборке, экономия времени =)
+```
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o build/olcrtc-linux-amd64 ./cmd/olcrtc
+```
 
+Запускаете бинарник, указываете параметры:
+```
+./build/olcrtc-linux-amd64 -mode srv -provider "telemost" -id "06627677819234"
+./build/olcrtc-linux-amd64 -mode srv -provider "jazz" -id "any"
+```
+---
 ## Благодарность
 
 - [zarazaex](https://t.me/zarazaexe) и [openlibrecommunity](https://github.com/openlibrecommunity) — за создание OlcRTC
