@@ -180,7 +180,7 @@ return view.extend({
             room_id    : uci.get('olcrtc', 'config', 'room_id')    || '',
             key        : uci.get('olcrtc', 'config', 'key')        || '',
             socks_port : uci.get('olcrtc', 'config', 'socks_port') || '1080',
-            enabled    : uci.get('olcrtc', 'config', 'enabled')    || '0'
+
         };
 
         /* ── Блок статуса ───────────────────────────────────── */
@@ -309,15 +309,6 @@ return view.extend({
             }
         });
 
-        var enabledChk = E('input', {
-            class  : 'cbi-input-checkbox',
-            type   : 'checkbox',
-            checked: cfg.enabled === '1' ? '' : null,
-            change : function (ev) {
-                self._saveField('enabled', ev.target.checked ? '1' : '0');
-            }
-        });
-
         var settingsSection = E('div', { class: 'cbi-section' }, [
             E('legend', {}, 'Настройки подключения'),
             E('div', { class: 'cbi-section-node' }, [
@@ -333,8 +324,7 @@ return view.extend({
                     keyInput),
                 row('SOCKS5-порт',
                     'Локальный порт прокси (по умолчанию 1080)',
-                    portInput),
-                row('Автозапуск при загрузке', null, enabledChk)
+                    portInput)
             ])
         ]);
 
