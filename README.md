@@ -23,7 +23,6 @@ OlcRTC запускается на роутере как SOCKS5-прокси.
 - Кнопки **Старт** и **Стоп**
 - Индикатор статуса с PID
 - Отображение логов
-- Автозапуск при старте роутера (опционально)
 
 ---
 
@@ -157,12 +156,13 @@ cd olcrtc
 ```
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o build/olcrtc-linux-amd64 ./cmd/olcrtc
 ```
-Вариант для windows:
+Сборка для windows (у вас в европе обычный пк на винде):
 ```
 GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o build/olcrtc-windows-amd64.exe ./cmd/olcrtc
 $env:GOOS="windows"; $env:GOARCH="amd64"; $env:CGO_ENABLED="0"; go build -trimpath -ldflags="-s -w" -o build/olcrtc-windows-amd64.exe ./cmd/olcrtc
 ```
-> Вариант В для ленивых скачать готовый бинарник olcrtc-linux-amd64 из этого репозитория 
+> Вариант для ленивых - скачать готовый бинарники из этого репозитория
+> olcrtc-linux-amd64 или olcrtc-windows-amd64.exe
 
 Запускаете бинарник, указывая параметры:
 ```
