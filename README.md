@@ -23,7 +23,6 @@ OlcRTC запускается на роутере как SOCKS5-прокси.
 - Кнопки **Старт** и **Стоп**
 - Индикатор статуса с PID
 - Отображение логов
-- Настройки сохраняются через UCI (`/etc/config/olcrtc`)
 - Автозапуск при старте роутера (опционально)
 
 ---
@@ -32,11 +31,11 @@ OlcRTC запускается на роутере как SOCKS5-прокси.
 
 - OpenWRT с LuCI (проверено на OpenWrt 25.12.1 & Luci 0.7.14)
 - Архитектура: **ARM64** (aarch64) — например, роутер Cudy WR3000S
-- Свободное место: 10 МБ
 
 > Если у вас другая архитектура — соберите бинарник самостоятельно из [исходников OlcRTC](https://github.com/openlibrecommunity/olcrtc), ниже будет описано как это сделать. (Рекомендую собрать самостоятельно, а не слепо скачивать у меня =)
 
-- Удалённый VPS сервер на Linux для запуска OlcRTC сервера (Ниже будет описано как запустить OlcRTC на своём Linux VPS)
+- Свободное место: 10 МБ
+- Удалённый VPS сервер на Linux для запуска OlcRTC сервера (Ниже будет описано как его запустить)
 ---
 
 ## Установка клиента на роутер
@@ -85,7 +84,7 @@ rm -rf /www/luci-static/resources/view/olcrtc
 ```
 
 ---
-## Как скомпилировать под свой роутер?
+## Как скомпилировать OlcRTC под свой роутер?
 
 Определите архитектуру своего роутера.
 Подключитесь к роутеру по SSH и выполните:
@@ -147,8 +146,8 @@ GOOS=linux GOARCH=arm GOARM=7 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" 
 $env:GOOS="linux"; $env:GOARCH="arm"; $env:GOARM="7"; $env:CGO_ENABLED="0"; go build -trimpath -ldflags="-s -w" -o build/olcrtc-linux-armv7 ./cmd/olcrtc
 ```
 ---
-## Как запустить OlcRTC на своём Linux VPS ?
-Клонируйте репозиторий:
+## Как запустить OlcRTC сервер на своём Linux VPS ?
+Клонируйте репозиторий OlcRTC:
 ```
 git clone https://github.com/openlibrecommunity/olcrtc
 cd olcrtc
@@ -162,6 +161,7 @@ cd olcrtc
 ```
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o build/olcrtc-linux-amd64 ./cmd/olcrtc
 ```
+> Вариант В для ленивых скачать готовый бинарник olcrtc-linux-amd64 из этого репозитория 
 
 Запускаете бинарник, указываете параметры:
 ```
