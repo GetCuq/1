@@ -11,19 +11,13 @@ PIDFILE=/var/run/olcrtc.pid
 LOGTAG="olcrtc"
 
 start_service() {
-    local provider room_id key socks_port enabled
+    local provider room_id key socks_port
 
     config_load olcrtc
     config_get provider   config provider   'telemost'
     config_get room_id    config room_id    ''
     config_get key        config key        ''
     config_get socks_port config socks_port '1080'
-    config_get enabled    config enabled    '0'
-
-    if [ "$enabled" != "1" ]; then
-        logger -t "$LOGTAG" "Автозапуск отключён, пропускаем старт"
-        return 0
-    fi
 
     if [ -z "$room_id" ] || [ -z "$key" ]; then
         logger -t "$LOGTAG" "Ошибка: не заданы Room ID или ключ — запуск невозможен"
