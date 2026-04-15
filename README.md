@@ -105,15 +105,11 @@ armv7 — arm + GOARM=7
 
 x86_64 — amd64
 
----
-
 Скачайте репозиторий OlcRTC
 ```
 git clone https://github.com/openlibrecommunity/olcrtc
 cd olcrtc
 ```
-
----
 
 Скомпилируйте (команды для Linux/Microsoft PowerShell):
 
@@ -163,7 +159,7 @@ GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bui
 ```
 > Вариант В для ленивых скачать готовый бинарник olcrtc-linux-amd64 из этого репозитория 
 
-Запускаете бинарник, указываете параметры:
+Запускаете бинарник, указывая параметры:
 ```
 ./build/olcrtc-linux-amd64 -mode srv -provider "telemost" -id "06627677819234"
 ./build/olcrtc-linux-amd64 -mode srv -provider "jazz" -id "any"
@@ -171,4 +167,4 @@ GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bui
 ---
 ## Благодарность
 
-- [zarazaex](https://t.me/zarazaexe) и [openlibrecommunity](https://github.com/openlibrecommunity) — за создание OlcRTC
+- [zarazaex](https://github.com/zarazaex69) и [openlibrecommunity](https://github.com/openlibrecommunity) — за создание OlcRTC
