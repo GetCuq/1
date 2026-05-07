@@ -18,7 +18,6 @@
    RPC-объявления (прямые ubus-вызовы, без LuCI-прослойки)
    ══════════════════════════════════════════════════════════ */
 
-/* Управление сервисом через procd rc */
 var callInitAction = rpc.declare({
     object : 'rc',
     method : 'init',
@@ -26,7 +25,6 @@ var callInitAction = rpc.declare({
     expect : { result: 0 }
 });
 
-/* Список запущенных сервисов procd */
 var callServiceList = rpc.declare({
     object : 'service',
     method : 'list',
@@ -34,7 +32,6 @@ var callServiceList = rpc.declare({
     expect : { '': {} }
 });
 
-/* Запись значений UCI (без apply!) */
 var callUciSet = rpc.declare({
     object : 'uci',
     method : 'set',
@@ -42,7 +39,6 @@ var callUciSet = rpc.declare({
     expect : {}
 });
 
-/* Коммит UCI на диск (аналог `uci commit olcrtc`) */
 var callUciCommit = rpc.declare({
     object : 'uci',
     method : 'commit',
@@ -50,13 +46,22 @@ var callUciCommit = rpc.declare({
     expect : {}
 });
 
-/* Выполнение команды (для чтения logread) */
 var callExec = rpc.declare({
     object : 'file',
     method : 'exec',
     params : [ 'command', 'params', 'env' ],
     expect : { stdout: '' }
 });
+
+/* ══════════════════════════════════════════════════════════
+   Матрица совместимости carrier ↔ transport
+   ══════════════════════════════════════════════════════════ */
+
+var COMPAT = {
+    telemost : ['vp8channel', 'videochannel'],
+    jazz     : ['datachannel', 'vp8channel', 'seichannel', 'videochannel'],
+    wbstream : ['datachannel', 'vp8channel', 'seichannel', 'videochannel']
+};
 
 /* ══════════════════════════════════════════════════════════
    Вспомогательные функции
@@ -88,7 +93,6 @@ function getLogs() {
             return (res && res.length > 0) ? res : '(записей в логе пока нет)';
         })
         .catch(function () {
-            /* Fallback: logread без фильтра, потом фильтруем сами */
             return callExec('/sbin/logread', [], null)
                 .then(function (res) {
                     if (!res) return '(лог пуст)';
@@ -108,11 +112,12 @@ function getLogs() {
    ══════════════════════════════════════════════════════════ */
 return view.extend({
 
-    _pollTimer : null,
-    _statusEl  : null,
-    _logsEl    : null,
-    _startBtn  : null,
-    _stopBtn   : null,
+    _pollTimer    : null,
+    _statusEl     : null,
+    _logsEl       : null,
+    _startBtn     : null,
+    _stopBtn      : null,
+    _transportSel : null,
 
     load: function () {
         return Promise.all([
@@ -121,7 +126,6 @@ return view.extend({
         ]);
     },
 
-    /* Моментальное сохранение одного поля через ubus */
     _saveField: function (key, value) {
         var values = {};
         values[key] = value;
@@ -132,27 +136,25 @@ return view.extend({
             });
     },
 
-    /* Обновление индикатора статуса и состояния кнопок */
     _updateUI: function (status) {
         if (this._statusEl) {
             var dot   = status.running ? '🟢' : '🔴';
             var label = status.running
-                ? ('Работает' + (status.pid ? ' (PID\u00a0' + status.pid + ')' : ''))
+                ? ('Работает' + (status.pid ? ' (PID ' + status.pid + ')' : ''))
                 : 'Остановлен';
             this._statusEl.innerHTML = dot + ' <strong>' + label + '</strong>';
         }
 
         if (this._startBtn) {
-            this._startBtn.disabled    = !!status.running;
+            this._startBtn.disabled      = !!status.running;
             this._startBtn.style.opacity = status.running ? '0.5' : '1';
         }
         if (this._stopBtn) {
-            this._stopBtn.disabled     = !status.running;
+            this._stopBtn.disabled       = !status.running;
             this._stopBtn.style.opacity  = !status.running ? '0.5' : '1';
         }
     },
 
-    /* Polling каждую секунду */
     _startPolling: function () {
         var self = this;
         if (self._pollTimer) clearInterval(self._pollTimer);
@@ -170,17 +172,38 @@ return view.extend({
         }, 1000);
     },
 
+    /* Обновляет список транспортов в зависимости от выбранного carrier.
+       Если текущий транспорт несовместим — переключает на vp8channel. */
+    _updateTransportOptions: function (carrier) {
+        var self     = this;
+        var sel      = self._transportSel;
+        if (!sel) return;
+
+        var allowed  = COMPAT[carrier] || COMPAT['telemost'];
+        var opts     = sel.options;
+
+        for (var i = 0; i < opts.length; i++) {
+            opts[i].disabled = allowed.indexOf(opts[i].value) === -1;
+        }
+
+        if (allowed.indexOf(sel.value) === -1) {
+            sel.value = 'vp8channel';
+            self._saveField('transport', 'vp8channel');
+        }
+    },
+
     render: function (data) {
         var self       = this;
         var initStatus = data[1];
 
-        /* Читаем сохранённые значения UCI */
         var cfg = {
-            provider   : uci.get('olcrtc', 'config', 'provider')   || 'telemost',
+            carrier    : uci.get('olcrtc', 'config', 'carrier')    || 'telemost',
+            transport  : uci.get('olcrtc', 'config', 'transport')  || 'vp8channel',
             room_id    : uci.get('olcrtc', 'config', 'room_id')    || '',
+            client_id  : uci.get('olcrtc', 'config', 'client_id')  || '',
             key        : uci.get('olcrtc', 'config', 'key')        || '',
             socks_port : uci.get('olcrtc', 'config', 'socks_port') || '1080',
-
+            dns        : uci.get('olcrtc', 'config', 'dns')        || '1.1.1.1:53'
         };
 
         /* ── Блок статуса ───────────────────────────────────── */
@@ -243,21 +266,7 @@ return view.extend({
             ]);
         }
 
-        /* ── Поля формы (автосохранение по событию change/input) */
-
-        var providerSel = E('select', {
-            class  : 'cbi-input-select',
-            change : function (ev) { self._saveField('provider', ev.target.value); }
-        }, [
-            E('option', { value: 'telemost',
-                          selected: cfg.provider === 'telemost' ? '' : null },
-                'Telemost (telemost.yandex.ru)'),
-            E('option', { value: 'jazz',
-                          selected: cfg.provider === 'jazz' ? '' : null },
-                'Jazz (salutejazz.ru)')
-        ]);
-
-        /* Дебаунс 600 мс для текстовых полей (не спамим ubus при каждом символе) */
+        /* Дебаунс 600 мс для текстовых полей */
         function makeDebounced(fieldName) {
             var timer;
             return {
@@ -275,16 +284,80 @@ return view.extend({
             };
         }
 
+        /* ── Carrier (несущий сервис) ────────────────────────── */
+        var carrierSel = E('select', {
+            class  : 'cbi-input-select',
+            change : function (ev) {
+                var c = ev.target.value;
+                self._saveField('carrier', c);
+                self._updateTransportOptions(c);
+            }
+        }, [
+            E('option', { value: 'telemost',
+                          selected: cfg.carrier === 'telemost' ? '' : null },
+                'Telemost (telemost.yandex.ru)'),
+            E('option', { value: 'jazz',
+                          selected: cfg.carrier === 'jazz' ? '' : null },
+                'Jazz (salutejazz.ru)'),
+            E('option', { value: 'wbstream',
+                          selected: cfg.carrier === 'wbstream' ? '' : null },
+                'Wildberries Stream (stream.wb.ru)')
+        ]);
+
+        /* ── Transport (протокол передачи) ───────────────────── */
+        var allowed = COMPAT[cfg.carrier] || COMPAT['telemost'];
+
+        var transportSel = E('select', {
+            class  : 'cbi-input-select',
+            change : function (ev) {
+                self._saveField('transport', ev.target.value);
+            }
+        }, [
+            E('option', {
+                value    : 'datachannel',
+                selected : cfg.transport === 'datachannel' ? '' : null,
+                disabled : allowed.indexOf('datachannel') === -1 ? '' : null
+            }, 'datachannel — максимальная скорость (не для Telemost)'),
+            E('option', {
+                value    : 'vp8channel',
+                selected : cfg.transport === 'vp8channel' ? '' : null
+            }, 'vp8channel — работает везде (рекомендуется)'),
+            E('option', {
+                value    : 'seichannel',
+                selected : cfg.transport === 'seichannel' ? '' : null,
+                disabled : allowed.indexOf('seichannel') === -1 ? '' : null
+            }, 'seichannel — не для Telemost'),
+            E('option', {
+                value    : 'videochannel',
+                selected : cfg.transport === 'videochannel' ? '' : null
+            }, 'videochannel — крайний случай, везде')
+        ]);
+
+        self._transportSel = transportSel;
+
+        /* ── Room ID ─────────────────────────────────────────── */
         var roomHandlers = makeDebounced('room_id');
         var roomInput = E('input', {
             class       : 'cbi-input-text',
             type        : 'text',
             value       : cfg.room_id,
-            placeholder : 'Например: 49286587700808',
+            placeholder : 'Для Jazz/WB можно оставить пустым (any)',
             change      : roomHandlers.change,
             input       : roomHandlers.input
         });
 
+        /* ── Client ID ───────────────────────────────────────── */
+        var clientHandlers = makeDebounced('client_id');
+        var clientInput = E('input', {
+            class       : 'cbi-input-text',
+            type        : 'text',
+            value       : cfg.client_id,
+            placeholder : 'Например: home-router',
+            change      : clientHandlers.change,
+            input       : clientHandlers.input
+        });
+
+        /* ── Key ─────────────────────────────────────────────── */
         var keyHandlers = makeDebounced('key');
         var keyInput = E('input', {
             class       : 'cbi-input-text',
@@ -295,6 +368,7 @@ return view.extend({
             input       : keyHandlers.input
         });
 
+        /* ── SOCKS5 порт ─────────────────────────────────────── */
         var portInput = E('input', {
             class       : 'cbi-input-text',
             type        : 'number',
@@ -309,23 +383,45 @@ return view.extend({
             }
         });
 
+        /* ── DNS ─────────────────────────────────────────────── */
+        var dnsHandlers = makeDebounced('dns');
+        var dnsInput = E('input', {
+            class       : 'cbi-input-text',
+            type        : 'text',
+            value       : cfg.dns,
+            placeholder : '1.1.1.1:53',
+            change      : dnsHandlers.change,
+            input       : dnsHandlers.input
+        });
+
         var settingsSection = E('div', { class: 'cbi-section' }, [
             E('legend', {}, 'Настройки подключения'),
             E('div', { class: 'cbi-section-node' }, [
-                row('Провайдер', null, providerSel),
+                row('Несущий сервис',
+                    'Через какой сервис идёт туннель. Telemost поддерживает меньше транспортов.',
+                    carrierSel),
+                row('Транспорт',
+                    'Протокол передачи данных внутри туннеля.',
+                    transportSel),
                 row('Room ID',
-                    'Идентификатор комнаты (Telemost — числовой, Jazz — id:pass)',
+                    'Для Telemost — ID комнаты с сайта telemost.yandex.ru. Для Jazz / Wildberries — оставьте пустым, ID создастся автоматически.',
                     roomInput),
-                row('Ключ (key)',
-                    'Общий секретный ключ сервера (hex-строка, 64 символа)',
+                row('Client ID',
+                    'Короткий идентификатор, должен совпадать с сервером (например: home-router).',
+                    clientInput),
+                row('Ключ шифрования',
+                    'HEX-строка 64 символа. Генерация: openssl rand -hex 32. Должна совпадать с сервером.',
                     keyInput),
                 row('SOCKS5-порт',
-                    'Локальный порт прокси (по умолчанию 1080)',
-                    portInput)
+                    'Локальный порт прокси (по умолчанию 1080).',
+                    portInput),
+                row('DNS-сервер',
+                    'DNS для резолвинга в туннеле (по умолчанию 1.1.1.1:53).',
+                    dnsInput)
             ])
         ]);
 
-        /* ── Блок логов (развёрнут по умолчанию) ───────────── */
+        /* ── Блок логов ──────────────────────────────────────── */
         var logsEl = E('pre', {
             style : 'background:#0d1117;color:#3fb950;padding:12px;' +
                     'max-height:360px;overflow-y:auto;border-radius:6px;' +
@@ -339,7 +435,6 @@ return view.extend({
             E('div', { class: 'cbi-section-node' }, [ logsEl ])
         ]);
 
-        /* Запускаем polling */
         self._startPolling();
 
         return E('div', {}, [
@@ -349,8 +444,6 @@ return view.extend({
         ]);
     },
 
-    /* Отключаем стандартные кнопки LuCI Save/Apply/Reset —
-       сохранение идёт автоматически через ubus, они не нужны. */
     handleSave      : function () { return Promise.resolve(); },
     handleSaveApply : function () { return Promise.resolve(); },
     handleReset     : function () { return Promise.resolve(); }

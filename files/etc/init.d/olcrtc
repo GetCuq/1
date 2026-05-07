@@ -11,16 +11,24 @@ PIDFILE=/var/run/olcrtc.pid
 LOGTAG="olcrtc"
 
 start_service() {
-    local provider room_id key socks_port
+    local carrier transport room_id client_id key socks_port dns
 
     config_load olcrtc
-    config_get provider   config provider   'telemost'
+    config_get carrier    config carrier    'telemost'
+    config_get transport  config transport  'vp8channel'
     config_get room_id    config room_id    ''
+    config_get client_id  config client_id  ''
     config_get key        config key        ''
     config_get socks_port config socks_port '1080'
+    config_get dns        config dns        '1.1.1.1:53'
 
     if [ -z "$room_id" ] || [ -z "$key" ]; then
         logger -t "$LOGTAG" "Ошибка: не заданы Room ID или ключ — запуск невозможен"
+        return 1
+    fi
+
+    if [ -z "$client_id" ]; then
+        logger -t "$LOGTAG" "Ошибка: не задан Client ID — запуск невозможен"
         return 1
     fi
 
@@ -29,14 +37,19 @@ start_service() {
         return 1
     fi
 
-    logger -t "$LOGTAG" "Запуск клиента: провайдер=$provider, порт=$socks_port"
+    logger -t "$LOGTAG" "Запуск клиента: carrier=$carrier transport=$transport порт=$socks_port"
 
     procd_open_instance
     procd_set_param command "$PROG" \
         -mode cnc \
-        -provider "$provider" \
+        -carrier "$carrier" \
+        -transport "$transport" \
         -id "$room_id" \
+        -client-id "$client_id" \
         -key "$key" \
+        -link direct \
+        -data data \
+        -dns "$dns" \
         -socks-port "$socks_port"
     procd_set_param respawn 3600 5 0
     procd_set_param stdout 1
