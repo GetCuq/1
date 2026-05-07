@@ -38,7 +38,7 @@ OlcRTC запускается на роутере как SOCKS5-прокси.
 > Если у вас другая архитектура — соберите бинарник самостоятельно из [исходников OlcRTC](https://github.com/openlibrecommunity/olcrtc), там описано как это сделать.
 
 - Свободное место: ~10 МБ
-- Удалённый сервер (VPS) с запущенной серверной частью OlcRTC — как это сделать описано в [документации OlcRTC](https://github.com/openlibrecommunity/olcrtc/blob/master/docs/fast.md)
+- Удалённый сервер (VPS) с запущенной серверной частью OlcRTC — для этого можете воспользоваться моим репозиторием [OlcRTC-VPS](https://github.com/tankionline2005/OlcRTC-VPS)
 
 ---
 
