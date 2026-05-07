@@ -59,7 +59,7 @@ var callExec = rpc.declare({
 
 var COMPAT = {
     telemost : ['vp8channel', 'videochannel'],
-    jazz     : ['datachannel', 'vp8channel', 'seichannel', 'videochannel'],
+    jazz     : ['vp8channel', 'seichannel', 'videochannel'],
     wbstream : ['datachannel', 'vp8channel', 'seichannel', 'videochannel']
 };
 
