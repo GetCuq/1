@@ -800,6 +800,15 @@ return view.extend({
             ]);
         }
 
+        /* Вертикальная раскладка: название сверху, поле снизу */
+        function rowV(label, hint, inputEl) {
+            return E('div', { style: 'margin-bottom:12px;' }, [
+                E('label', { style: 'display:block;font-size:0.82em;color:#b388ff;margin-bottom:5px;' }, label),
+                E('div', { style: 'width:100%;' }, [inputEl]),
+                hint ? E('div', { style: 'margin-top:3px;font-size:0.78em;color:#7a5f99;' }, hint) : null
+            ].filter(Boolean));
+        }
+
         function makeDebounced(fieldName, onChange) {
             var timer;
             return {
@@ -967,8 +976,8 @@ return view.extend({
         var vp8BatchInput = numInput('vp8_batch', cfg.vp8_batch, '1',  1, null);
         var vp8Section = E('div', {}, [
             E('div', { style: 'margin-bottom:8px;padding:4px 0;font-size:0.8em;color:#9a7fc0;text-transform:uppercase;letter-spacing:0.05em;border-bottom:1px solid rgba(138,92,246,0.15);' }, 'VP8 Channel — рекомендуется -vp8-fps 60 -vp8-batch 64'),
-            row('-vp8-fps',   'FPS VP8-потока. Рекомендуется: 60. По умолчанию: 25.',  vp8FpsInput),
-            row('-vp8-batch', 'Кадров за тик. Рекомендуется: 64. По умолчанию: 1.',    vp8BatchInput)
+            rowV('-vp8-fps',   'FPS VP8-потока. Рекомендуется: 60. По умолчанию: 25.',  vp8FpsInput),
+            rowV('-vp8-batch', 'Кадров за тик. Рекомендуется: 64. По умолчанию: 1.',    vp8BatchInput)
         ]);
         self._vp8Section = vp8Section;
 
@@ -978,10 +987,10 @@ return view.extend({
         var seiAckInput   = numInput('sei_ack_ms', cfg.sei_ack_ms, '2000', 1, null);
         var seiSection = E('div', {}, [
             E('div', { style: 'margin-bottom:8px;padding:4px 0;font-size:0.8em;color:#9a7fc0;text-transform:uppercase;letter-spacing:0.05em;border-bottom:1px solid rgba(138,92,246,0.15);' }, 'SEI Channel — рекомендуется -fps 60 -batch 64 -frag 900 -ack-ms 2000'),
-            row('-fps',    'FPS H264-потока. Рекомендуется: 60.',           seiFpsInput),
-            row('-batch',  'Кадров за тик. Рекомендуется: 64.',             seiBatchInput),
-            row('-frag',   'Размер фрагмента в байтах. Рекомендуется: 900.',seiFragInput),
-            row('-ack-ms', 'Таймаут ACK в мс. Рекомендуется: 2000.',        seiAckInput)
+            rowV('-fps',    'FPS H264-потока. Рекомендуется: 60.',           seiFpsInput),
+            rowV('-batch',  'Кадров за тик. Рекомендуется: 64.',             seiBatchInput),
+            rowV('-frag',   'Размер фрагмента в байтах. Рекомендуется: 900.',seiFragInput),
+            rowV('-ack-ms', 'Таймаут ACK в мс. Рекомендуется: 2000.',        seiAckInput)
         ]);
         self._seiSection = seiSection;
 
@@ -1010,23 +1019,23 @@ return view.extend({
         var ffmpegH         = makeDebounced('ffmpeg');
         var ffmpegInput     = E('input', { class: 'cbi-input-text', type: 'text', value: cfg.ffmpeg, placeholder: 'ffmpeg', change: ffmpegH.change, input: ffmpegH.input });
 
-        var qrRecoveryRow = row('-video-qr-recovery', 'Коррекция ошибок QR. (только qrcode)', qrRecoverySel);
-        var qrSizeRow     = row('-video-qr-size',     'Размер фрагмента QR, 0=авто. (только qrcode)', qrSizeInput);
-        var tileModuleRow = row('-video-tile-module', 'Размер тайла 1..270 пикс. Требует 1080×1080. (только tile)', tileModuleInput);
-        var tileRsRow     = row('-video-tile-rs',     'Reed-Solomon паритет % 0..200. (только tile)', tileRsInput);
+        var qrRecoveryRow = rowV('-video-qr-recovery', 'Коррекция ошибок QR. (только qrcode)', qrRecoverySel);
+        var qrSizeRow     = rowV('-video-qr-size',     'Размер фрагмента QR, 0=авто. (только qrcode)', qrSizeInput);
+        var tileModuleRow = rowV('-video-tile-module', 'Размер тайла 1..270 пикс. Требует 1080×1080. (только tile)', tileModuleInput);
+        var tileRsRow     = rowV('-video-tile-rs',     'Reed-Solomon паритет % 0..200. (только tile)', tileRsInput);
         self._qrRows   = [qrRecoveryRow, qrSizeRow];
         self._tileRows = [tileModuleRow, tileRsRow];
 
         var videoSection = E('div', {}, [
             E('div', { style: 'margin-bottom:8px;padding:4px 0;font-size:0.8em;color:#9a7fc0;text-transform:uppercase;letter-spacing:0.05em;border-bottom:1px solid rgba(138,92,246,0.15);' }, 'Video Channel — рекомендуется qrcode 1080×1080 60fps 5000k'),
-            row('-video-codec',   'Кодек передачи. qrcode — рекомендуется. tile — строго 1080×1080.',   videoCodecSel),
-            row('-video-w',       'Ширина кадра в пикс. Для tile — строго 1080.',                       videoWInput),
-            row('-video-h',       'Высота кадра в пикс. Для tile — строго 1080.',                       videoHInput),
-            row('-video-fps',     'FPS. Рекомендуется: 60. По умолчанию: 30.',                           videoFpsInput),
-            row('-video-bitrate', 'Битрейт: 2M или 5000k. Рекомендуется: 5000k.',                       videoBitrateInput),
-            row('-video-hw',      'Аппаратное ускорение. По умолчанию: none.',                           videoHwSel),
+            rowV('-video-codec',   'Кодек передачи. qrcode — рекомендуется. tile — строго 1080×1080.',   videoCodecSel),
+            rowV('-video-w',       'Ширина кадра в пикс. Для tile — строго 1080.',                       videoWInput),
+            rowV('-video-h',       'Высота кадра в пикс. Для tile — строго 1080.',                       videoHInput),
+            rowV('-video-fps',     'FPS. Рекомендуется: 60. По умолчанию: 30.',                           videoFpsInput),
+            rowV('-video-bitrate', 'Битрейт: 2M или 5000k. Рекомендуется: 5000k.',                       videoBitrateInput),
+            rowV('-video-hw',      'Аппаратное ускорение. По умолчанию: none.',                           videoHwSel),
             qrRecoveryRow, qrSizeRow, tileModuleRow, tileRsRow,
-            row('-ffmpeg', 'Путь к ffmpeg. По умолчанию: ffmpeg (из PATH).', ffmpegInput)
+            rowV('-ffmpeg', 'Путь к ffmpeg. По умолчанию: ffmpeg (из PATH).', ffmpegInput)
         ]);
         self._videoSection = videoSection;
 
@@ -1131,15 +1140,15 @@ return view.extend({
         ]);
 
         var socksCard = card('SOCKS5 прокси', [
-            row('Адрес (-socks-host)',  '0.0.0.0 — все интерфейсы. 127.0.0.1 — только локально.', socksHostInput),
-            row('Порт (-socks-port)',   'Локальный порт прокси. По умолчанию: 1080.',              socksPortInput),
-            row('Логин (-socks-user)',  'RFC 1929. Пусто = без аутентификации.',                   socksUserInput),
-            row('Пароль (-socks-pass)', 'Используется вместе с логином.',                          socksPassInput)
+            rowV('Адрес (-socks-host)',  '0.0.0.0 — все интерфейсы. 127.0.0.1 — только локально.', socksHostInput),
+            rowV('Порт (-socks-port)',   'Локальный порт прокси. По умолчанию: 1080.',              socksPortInput),
+            rowV('Логин (-socks-user)',  'RFC 1929. Пусто = без аутентификации.',                   socksUserInput),
+            rowV('Пароль (-socks-pass)', 'Используется вместе с логином.',                          socksPassInput)
         ]);
 
         var advancedCard = card('Дополнительно', [
-            row('DNS-сервер (-dns)',       'DNS для резолвинга в туннеле. По умолчанию: 1.1.1.1:53.', dnsInput),
-            row('Режим отладки (--debug)', 'Подробные логи WebRTC-соединений.',
+            rowV('DNS-сервер (-dns)',       'DNS для резолвинга в туннеле. По умолчанию: 1.1.1.1:53.', dnsInput),
+            rowV('Режим отладки (--debug)', 'Подробные логи WebRTC-соединений.',
                 E('label', { style: 'display:flex;align-items:center;cursor:pointer;' }, [debugCheck, E('span', {}, 'Включить подробное логирование')]))
         ]);
 
@@ -1174,7 +1183,7 @@ return view.extend({
         }
 
         return E('div', {
-            style: 'background:linear-gradient(160deg,#0f0726 0%,#0c1024 100%);' +
+            style: 'background:linear-gradient(160deg,#06011a 0%,#04091a 100%);' +
                    'border-radius:16px;padding:24px 28px;width:100%;box-sizing:border-box;'
         }, [
             /* Заголовок */
