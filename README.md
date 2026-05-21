@@ -51,7 +51,7 @@ olcrtc://telemost?videochannel<video-w=1080&video-h=1080&video-fps=60&video-bitr
 Подключитесь к роутеру по SSH и выполните:
 
 ```sh
-sh -c "$(wget -qO- https://raw.githubusercontent.com/tankionline2005/OlcRTC-OpenWRT/main/install.sh)"
+sh -c "$(wget -qO- https://raw.githubusercontent.com/GetCuq/1/master/install.sh)"
 ```
 
 Что делает скрипт:
@@ -199,5 +199,5 @@ SOCKS5 по умолчанию слушает только `127.0.0.1:1080`.
 ## Удаление
 
 ```sh
-sh -c "$(wget -qO- https://raw.githubusercontent.com/tankionline2005/OlcRTC-OpenWRT/main/uninstall.sh)"
+sh -c "$(wget -qO- https://raw.githubusercontent.com/GetCuq/1/master/uninstall.sh)"
 ```
