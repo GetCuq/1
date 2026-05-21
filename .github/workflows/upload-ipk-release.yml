@@ -1,0 +1,43 @@
+name: Upload IPK to Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag"
+        required: true
+        default: "v0.1.0"
+      package_name:
+        description: "Expected IPK file name"
+        required: true
+        default: "luci-app-olcrtc.ipk"
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download artifact from workflow run
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.package_name }}
+          path: release-files
+        continue-on-error: true
+
+      - name: Validate package exists
+        run: |
+          ls -la release-files || true
+          test -f "release-files/${{ inputs.package_name }}"
+
+      - name: Create or update release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          make_latest: true
+          files: release-files/${{ inputs.package_name }}
