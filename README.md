@@ -63,6 +63,55 @@ sh -c "$(wget -qO- https://raw.githubusercontent.com/tankionline2005/OlcRTC-Open
 
 После установки откройте LuCI -> `Services -> OlcRTC`.
 
+### Установка с локального ПК по SSH
+
+Если бинарник уже скачан с GitHub Actions и ты не хочешь, чтобы роутер что-то тянул из интернета, используй локальный PowerShell-скрипт:
+
+```powershell
+.\deploy-openwrt.ps1 -Router 192.168.1.1 -User root -BinaryPath .\olcrtc-linux-arm64
+```
+
+Если хочешь сразу перезапустить сервис после копирования:
+
+```powershell
+.\deploy-openwrt.ps1 -Router 192.168.1.1 -User root -BinaryPath .\olcrtc-linux-arm64 -RestartService
+```
+
+Скрипт сам:
+
+- заливает бинарник на роутер через `scp`
+- копирует init, UCI и LuCI-файлы
+- ставит их на нужные пути
+- включает `/etc/init.d/olcrtc`
+- перезапускает `rpcd` и `uhttpd`
+
+## Сборка IPK
+
+Если хочешь ставить это как обычный OpenWrt-пакет, собери `.ipk` локально:
+
+```powershell
+.\build-ipk.ps1 -BinaryPath .\olcrtc-linux-arm64 -Architecture aarch64_cortex-a53
+```
+
+Готовый файл появится в:
+
+```text
+.\dist\
+```
+
+Для `AX3000T` правильная архитектура пакета:
+
+```text
+aarch64_cortex-a53
+```
+
+Установка на роутер после сборки:
+
+```powershell
+scp -O .\dist\luci-app-olcrtc_*.ipk root@192.168.1.1:/tmp/
+ssh root@192.168.1.1 opkg install /tmp/luci-app-olcrtc_*.ipk
+```
+
 ## Настройка
 
 Минимально нужны:
