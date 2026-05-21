@@ -1,0 +1,102 @@
+name: Build universal-carrier binaries
+
+on:
+  workflow_dispatch:
+    inputs:
+      update_repo_binaries:
+        description: "Commit built binaries back to this repository"
+        required: false
+        default: false
+        type: boolean
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/build-universal-carrier.yml
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goarch: amd64
+            output: olcrtc-linux-amd64
+          - goarch: arm64
+            output: olcrtc-linux-arm64
+
+    steps:
+      - name: Checkout current repository
+        uses: actions/checkout@v4
+
+      - name: Checkout upstream universal-carrier
+        uses: actions/checkout@v4
+        with:
+          repository: openlibrecommunity/olcrtc
+          ref: refactor/universal-carrier
+          path: upstream-olcrtc
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: upstream-olcrtc/go.mod
+          check-latest: true
+
+      - name: Build binary
+        working-directory: upstream-olcrtc
+        env:
+          CGO_ENABLED: 0
+          GOOS: linux
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          mkdir -p ../dist
+          go build -trimpath -ldflags="-s -w" -o "../dist/${{ matrix.output }}" ./cmd/olcrtc
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.output }}
+          path: dist/${{ matrix.output }}
+          if-no-files-found: error
+
+  publish-to-repo:
+    name: Update repository binaries
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.update_repo_binaries
+
+    steps:
+      - name: Checkout current repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Download amd64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: olcrtc-linux-amd64
+          path: .
+
+      - name: Download arm64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: olcrtc-linux-arm64
+          path: .
+
+      - name: Generate checksums
+        run: |
+          sha256sum olcrtc-linux-amd64 olcrtc-linux-arm64 > SHA256SUMS
+
+      - name: Commit updated binaries
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add olcrtc-linux-amd64 olcrtc-linux-arm64 SHA256SUMS
+          git diff --cached --quiet && exit 0
+          git commit -m "chore: update universal-carrier binaries"
+          git push

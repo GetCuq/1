@@ -4,159 +4,190 @@
 'require rpc';
 'require ui';
 
-/*
- * OlcRTC-OpenWRT — LuCI-панель управления
- * Основана на проекте OlcRTC (https://github.com/openlibrecommunity/olcrtc)
- * автора zarazaex / openlibrecommunity
- */
-
-/* ══════════════════════════════════════════════════════════
-   RPC-объявления
-   ══════════════════════════════════════════════════════════ */
-
 var callInitAction = rpc.declare({
-    object : 'rc',
-    method : 'init',
-    params : [ 'name', 'action' ],
-    expect : { result: 0 }
+    object: 'rc',
+    method: 'init',
+    params: [ 'name', 'action' ],
+    expect: { result: 0 }
 });
 
 var callServiceList = rpc.declare({
-    object : 'service',
-    method : 'list',
-    params : [ 'name' ],
-    expect : { '': {} }
+    object: 'service',
+    method: 'list',
+    params: [ 'name' ],
+    expect: { '': {} }
 });
 
 var callUciSet = rpc.declare({
-    object : 'uci',
-    method : 'set',
-    params : [ 'config', 'section', 'values' ],
-    expect : {}
+    object: 'uci',
+    method: 'set',
+    params: [ 'config', 'section', 'values' ],
+    expect: {}
 });
 
 var callUciCommit = rpc.declare({
-    object : 'uci',
-    method : 'commit',
-    params : [ 'config' ],
-    expect : {}
+    object: 'uci',
+    method: 'commit',
+    params: [ 'config' ],
+    expect: {}
 });
 
 var callUciAdd = rpc.declare({
-    object : 'uci',
-    method : 'add',
-    params : [ 'config', 'type' ],
-    expect : { section: '' }
+    object: 'uci',
+    method: 'add',
+    params: [ 'config', 'type' ],
+    expect: { section: '' }
 });
 
 var callUciDelete = rpc.declare({
-    object : 'uci',
-    method : 'delete',
-    params : [ 'config', 'section' ],
-    expect : {}
+    object: 'uci',
+    method: 'delete',
+    params: [ 'config', 'section' ],
+    expect: {}
 });
 
 var callExec = rpc.declare({
-    object : 'file',
-    method : 'exec',
-    params : [ 'command', 'params', 'env' ],
-    expect : { stdout: '' }
+    object: 'file',
+    method: 'exec',
+    params: [ 'command', 'params', 'env' ],
+    expect: { stdout: '' }
 });
 
-/* ══════════════════════════════════════════════════════════
-   Матрица совместимости carrier × transport
-   Jazz + datachannel: полностью запрещён.
-   ══════════════════════════════════════════════════════════ */
-
-var COMPAT = {
-    telemost : ['vp8channel', 'videochannel'],
-    jazz     : ['vp8channel', 'seichannel', 'videochannel'],
-    wbstream : ['datachannel', 'vp8channel', 'seichannel', 'videochannel']
+var MATRIX = {
+    telemost: {
+        datachannel: 'bad',
+        vp8channel: 'good',
+        seichannel: 'bad',
+        videochannel: 'warn'
+    },
+    wbstream: {
+        datachannel: 'warn',
+        vp8channel: 'good',
+        seichannel: 'good',
+        videochannel: 'good'
+    },
+    jitsi: {
+        datachannel: 'good',
+        vp8channel: 'warn',
+        seichannel: 'warn',
+        videochannel: 'warn'
+    }
 };
 
-/* ══════════════════════════════════════════════════════════
-   Утилиты
-   ══════════════════════════════════════════════════════════ */
+var PROVIDER_LABELS = {
+    telemost: 'Telemost',
+    wbstream: 'WBStream',
+    jitsi: 'Jitsi'
+};
 
-function pad2(n) { return n < 10 ? '0' + n : String(n); }
-function fmtTime(ms) {
-    var d = new Date(ms);
-    return pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds());
+var TRANSPORT_LABELS = {
+    datachannel: 'datachannel',
+    vp8channel: 'vp8channel',
+    seichannel: 'seichannel',
+    videochannel: 'videochannel'
+};
+
+function execStdout(command, params, env) {
+    return callExec(command, params || [], env || null).then(function (res) {
+        return (res && typeof res.stdout === 'string') ? res.stdout : '';
+    });
 }
+
+function pad2(n) {
+    return n < 10 ? '0' + n : String(n);
+}
+
 function fmtDate(ts) {
     if (!ts) return '';
     var d = new Date(ts * 1000);
     return pad2(d.getDate()) + '.' + pad2(d.getMonth() + 1) + '.' + d.getFullYear() +
-           ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+        ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes());
 }
 
-/* hex → rgba, например '#4A90E2', 0.08 → 'rgba(74,144,226,0.08)' */
-function hexToRgba(hex, alpha) {
-    if (!hex || hex.charAt(0) !== '#') return null;
-    var h = hex.slice(1);
-    if (h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
-    if (h.length !== 6) return null;
-    var r = parseInt(h.slice(0,2), 16);
-    var g = parseInt(h.slice(2,4), 16);
-    var b = parseInt(h.slice(4,6), 16);
-    if (isNaN(r) || isNaN(g) || isNaN(b)) return null;
-    return 'rgba(' + r + ',' + g + ',' + b + ',' + alpha + ')';
+function parseRefreshMs(str) {
+    var num = parseInt(str, 10);
+    if (isNaN(num) || num <= 0) return 10 * 60 * 1000;
+    var unit = str.replace(/[0-9]/g, '').trim().toLowerCase();
+    if (unit === 's') return num * 1000;
+    if (unit === 'h') return num * 3600 * 1000;
+    if (unit === 'd') return num * 86400 * 1000;
+    return num * 60 * 1000;
 }
 
-/* ══════════════════════════════════════════════════════════
-   Парсер параметров транспорта из URI (<key=val&key=val>)
-   ══════════════════════════════════════════════════════════ */
+function refreshLabel(str) {
+    var num = parseInt(str, 10);
+    var unit = str.replace(/[0-9]/g, '').trim().toLowerCase();
+    var names = { s: 'сек', m: 'мин', h: 'ч', d: 'д' };
+    return num + ' ' + (names[unit] || 'мин');
+}
+
+function isHex64(str) {
+    return /^[0-9a-fA-F]{64}$/.test(str || '');
+}
+
+function isLoopbackHost(host) {
+    return host === '127.0.0.1' || host === 'localhost' || host === '::1';
+}
+
+function statusMeta(kind) {
+    if (kind === 'good') return { icon: 'OK', color: '#3fb950', text: 'Работает стабильно' };
+    if (kind === 'warn') return { icon: '!!', color: '#d29922', text: 'Best effort / нестабильно' };
+    return { icon: 'NO', color: '#f85149', text: 'Не поддерживается' };
+}
+
+function compatibilityKind(provider, transport) {
+    return (MATRIX[provider] && MATRIX[provider][transport]) || 'bad';
+}
 
 function parseTransportParams(transport, paramsStr) {
     var result = {};
     if (!paramsStr) return result;
+
     paramsStr.split('&').forEach(function (pair) {
         var eq = pair.indexOf('=');
         if (eq < 0) return;
         var k = pair.slice(0, eq).trim();
         var v = pair.slice(eq + 1).trim();
-        if (transport === 'seichannel') {
-            if (k === 'fps')    result.sei_fps    = v;
-            if (k === 'batch')  result.sei_batch  = v;
-            if (k === 'frag')   result.sei_frag   = v;
-            if (k === 'ack-ms') result.sei_ack_ms = v;
-        } else if (transport === 'vp8channel') {
-            if (k === 'vp8-fps')   result.vp8_fps   = v;
+
+        if (transport === 'vp8channel') {
+            if (k === 'vp8-fps') result.vp8_fps = v;
             if (k === 'vp8-batch') result.vp8_batch = v;
+        } else if (transport === 'seichannel') {
+            if (k === 'fps') result.sei_fps = v;
+            if (k === 'batch') result.sei_batch = v;
+            if (k === 'frag') result.sei_frag = v;
+            if (k === 'ack-ms') result.sei_ack_ms = v;
         } else if (transport === 'videochannel') {
-            if (k === 'video-codec')       result.video_codec       = v;
-            if (k === 'video-w')           result.video_w           = v;
-            if (k === 'video-h')           result.video_h           = v;
-            if (k === 'video-fps')         result.video_fps         = v;
-            if (k === 'video-bitrate')     result.video_bitrate     = v;
-            if (k === 'video-hw')          result.video_hw          = v;
+            if (k === 'video-codec') result.video_codec = v;
+            if (k === 'video-w') result.video_w = v;
+            if (k === 'video-h') result.video_h = v;
+            if (k === 'video-fps') result.video_fps = v;
+            if (k === 'video-bitrate') result.video_bitrate = v;
+            if (k === 'video-hw') result.video_hw = v;
             if (k === 'video-qr-recovery') result.video_qr_recovery = v;
-            if (k === 'video-qr-size')     result.video_qr_size     = v;
+            if (k === 'video-qr-size') result.video_qr_size = v;
             if (k === 'video-tile-module') result.video_tile_module = v;
-            if (k === 'video-tile-rs')     result.video_tile_rs     = v;
+            if (k === 'video-tile-rs') result.video_tile_rs = v;
         }
     });
+
     return result;
 }
 
-/* ══════════════════════════════════════════════════════════
-   Парсер URI olcrtc://
-   ══════════════════════════════════════════════════════════ */
-
 function parseOlcrtcUri(raw) {
-    var uri = raw.trim();
+    var uri = (raw || '').trim();
     if (uri.indexOf('olcrtc://') !== 0) return null;
+
     var rest = uri.slice(9);
-    var i;
+    var qIdx = rest.indexOf('?');
+    if (qIdx < 1) return null;
 
-    i = rest.indexOf('?');
-    if (i < 1) return null;
-    var carrier = rest.slice(0, i);
-    rest = rest.slice(i + 1);
+    var auth = rest.slice(0, qIdx);
+    rest = rest.slice(qIdx + 1);
 
-    var transport, transportParams = {};
-    var ltIdx = rest.indexOf('<');
     var atIdx = rest.indexOf('@');
+    var ltIdx = rest.indexOf('<');
+    var transport, transportParams = {};
 
     if (ltIdx !== -1 && (atIdx === -1 || ltIdx < atIdx)) {
         transport = rest.slice(0, ltIdx);
@@ -167,106 +198,94 @@ function parseOlcrtcUri(raw) {
         if (rest.charAt(0) !== '@') return null;
         rest = rest.slice(1);
     } else {
-        i = rest.indexOf('@');
-        if (i < 1) return null;
-        transport = rest.slice(0, i);
-        rest = rest.slice(i + 1);
+        if (atIdx < 1) return null;
+        transport = rest.slice(0, atIdx);
+        rest = rest.slice(atIdx + 1);
     }
 
-    i = rest.indexOf('#');
-    if (i < 0) return null;
-    var roomId = rest.slice(0, i);
-    rest = rest.slice(i + 1);
+    var hashIdx = rest.indexOf('#');
+    if (hashIdx < 1) return null;
+    var roomId = rest.slice(0, hashIdx);
+    rest = rest.slice(hashIdx + 1);
 
-    i = rest.indexOf('%');
-    if (i < 1) return null;
-    var key = rest.slice(0, i);
-    rest = rest.slice(i + 1);
+    var dollarIdx = rest.indexOf('$');
+    var key = dollarIdx === -1 ? rest : rest.slice(0, dollarIdx);
+    var mimo = dollarIdx === -1 ? '' : rest.slice(dollarIdx + 1);
 
-    i = rest.indexOf('$');
-    var clientId = i !== -1 ? rest.slice(0, i) : rest;
-    var mimo     = i !== -1 ? rest.slice(i + 1) : '';
-
-    var knownCarriers   = ['telemost', 'jazz', 'wbstream'];
-    var knownTransports = ['datachannel', 'vp8channel', 'seichannel', 'videochannel'];
-    if (knownCarriers.indexOf(carrier)     === -1) return null;
-    if (knownTransports.indexOf(transport) === -1) return null;
-    if (key.length !== 64)                         return null;
-    if (!clientId)                                 return null;
-    if (carrier === 'jazz' && transport === 'datachannel') return null;
+    if (['telemost', 'wbstream', 'jitsi'].indexOf(auth) === -1) return null;
+    if (['datachannel', 'vp8channel', 'seichannel', 'videochannel'].indexOf(transport) === -1) return null;
+    if (!isHex64(key)) return null;
+    if (!roomId) return null;
 
     return {
-        carrier: carrier, transport: transport,
-        room_id: roomId,  key: key, client_id: clientId,
-        mimo: mimo, transportParams: transportParams
+        auth_provider: auth,
+        transport: transport,
+        room_id: roomId,
+        key: key,
+        mimo: mimo,
+        transportParams: transportParams
     };
-}
-
-/* ══════════════════════════════════════════════════════════
-   Парсер формата подписки
-   ══════════════════════════════════════════════════════════ */
-
-function parseRefreshMs(str) {
-    var num  = parseInt(str, 10);
-    if (isNaN(num) || num <= 0) return 10 * 60 * 1000;
-    var unit = str.replace(/[0-9]/g, '').trim().toLowerCase();
-    if (unit === 's') return num * 1000;
-    if (unit === 'h') return num * 3600 * 1000;
-    if (unit === 'd') return num * 86400 * 1000;
-    return num * 60 * 1000;
-}
-
-function refreshLabel(str) {
-    var num  = parseInt(str, 10);
-    var unit = str.replace(/[0-9]/g, '').trim().toLowerCase();
-    var names = { s: 'сек', m: 'мин', h: 'ч', d: 'д' };
-    return num + ' ' + (names[unit] || 'мин');
 }
 
 function parseSubscription(text) {
     var lines = text.split('\n');
     var sub = {
-        name: '', update: 0, refresh: '10m', refreshMs: 10 * 60 * 1000,
-        color: '', icon: '', used: '', available: '', servers: []
+        name: '',
+        update: 0,
+        refresh: '10m',
+        refreshMs: 10 * 60 * 1000,
+        color: '',
+        icon: '',
+        used: '',
+        available: '',
+        servers: []
     };
     var cur = null;
 
-    for (var li = 0; li < lines.length; li++) {
-        var line = lines[li].trim();
+    for (var i = 0; i < lines.length; i++) {
+        var line = lines[i].trim();
         if (!line) continue;
 
         if (line.indexOf('##') === 0) {
             if (!cur) continue;
             var sep = line.indexOf(':', 2);
             if (sep < 0) continue;
-            var k = line.slice(2, sep).trim();
-            var v = line.slice(sep + 1).trim();
-            if      (k === 'name')      cur.name      = v;
-            else if (k === 'color')     cur.color     = v;
-            else if (k === 'icon')      cur.icon      = v;
-            else if (k === 'used')      cur.used      = v;
-            else if (k === 'available') cur.available = v;
-            else if (k === 'ip')        cur.ip        = v;
-            else if (k === 'comment')   cur.comment   = v;
+            var lk = line.slice(2, sep).trim();
+            var lv = line.slice(sep + 1).trim();
+            if (lk === 'name') cur.name = lv;
+            else if (lk === 'color') cur.color = lv;
+            else if (lk === 'icon') cur.icon = lv;
+            else if (lk === 'used') cur.used = lv;
+            else if (lk === 'available') cur.available = lv;
+            else if (lk === 'ip') cur.ip = lv;
+            else if (lk === 'comment') cur.comment = lv;
         } else if (line.indexOf('#') === 0) {
             var sep2 = line.indexOf(':', 1);
             if (sep2 < 0) continue;
             var gk = line.slice(1, sep2).trim();
             var gv = line.slice(sep2 + 1).trim();
-            if      (gk === 'name')      sub.name       = gv;
-            else if (gk === 'update')    sub.update     = parseInt(gv, 10) || 0;
-            else if (gk === 'refresh') { sub.refresh = gv; sub.refreshMs = parseRefreshMs(gv); }
-            else if (gk === 'color')     sub.color      = gv;
-            else if (gk === 'icon')      sub.icon       = gv;
-            else if (gk === 'used')      sub.used       = gv;
-            else if (gk === 'available') sub.available  = gv;
+            if (gk === 'name') sub.name = gv;
+            else if (gk === 'update') sub.update = parseInt(gv, 10) || 0;
+            else if (gk === 'refresh') {
+                sub.refresh = gv;
+                sub.refreshMs = parseRefreshMs(gv);
+            } else if (gk === 'color') sub.color = gv;
+            else if (gk === 'icon') sub.icon = gv;
+            else if (gk === 'used') sub.used = gv;
+            else if (gk === 'available') sub.available = gv;
         } else if (line.indexOf('olcrtc://') === 0) {
             var parsed = parseOlcrtcUri(line);
             if (!parsed) continue;
             cur = {
-                uri: line, parsed: parsed,
-                name: '', color: '', icon: '', used: '',
-                available: '', ip: '', comment: ''
+                uri: line,
+                parsed: parsed,
+                name: '',
+                color: '',
+                icon: '',
+                used: '',
+                available: '',
+                ip: '',
+                comment: ''
             };
             sub.servers.push(cur);
         }
@@ -275,140 +294,118 @@ function parseSubscription(text) {
     return sub.servers.length > 0 ? sub : null;
 }
 
-/* ══════════════════════════════════════════════════════════
-   Сервисные функции
-   ══════════════════════════════════════════════════════════ */
-
 function getStatus() {
     return callServiceList('olcrtc').then(function (res) {
         var inst = (res && res.olcrtc && res.olcrtc.instances) ? res.olcrtc.instances : {};
-        var running = false, pid = null;
-        Object.keys(inst).forEach(function (k) {
-            if (inst[k].running) { running = true; pid = inst[k].pid || null; }
+        var running = false;
+        var pid = null;
+
+        Object.keys(inst).forEach(function (name) {
+            if (inst[name].running) {
+                running = true;
+                pid = inst[name].pid || null;
+            }
         });
+
         return { running: running, pid: pid };
-    }).catch(function () { return { running: false, pid: null }; });
+    }).catch(function () {
+        return { running: false, pid: null };
+    });
 }
 
 function getLogs() {
-    return callExec('/sbin/logread', ['-e', 'olcrtc'], null)
-        .then(function (res) { return (res && res.length > 0) ? res : '(записей в логе пока нет)'; })
+    return execStdout('/sbin/logread', ['-e', 'olcrtc'], null)
+        .then(function (stdout) {
+            if (stdout) return stdout;
+            return execStdout('/sbin/logread', [], null).then(function (full) {
+                if (!full) return '(лог пуст)';
+                var lines = full.split('\n').filter(function (line) {
+                    return line.toLowerCase().indexOf('olcrtc') !== -1;
+                });
+                return lines.length ? lines.join('\n') : '(записей с тегом olcrtc нет)';
+            });
+        })
         .catch(function () {
-            return callExec('/sbin/logread', [], null)
-                .then(function (res) {
-                    if (!res) return '(лог пуст)';
-                    var lines = res.split('\n').filter(function (l) { return l.toLowerCase().indexOf('olcrtc') !== -1; });
-                    return lines.length ? lines.join('\n') : '(записей с тегом olcrtc нет)';
-                })
-                .catch(function () { return '(logread недоступен — проверьте ACL)'; });
+            return '(logread недоступен)';
         });
 }
 
-/* ══════════════════════════════════════════════════════════
-   Стиль выбранной карточки (зелёный, поверх цвета сервера)
-   ══════════════════════════════════════════════════════════ */
-
-var CARD_SELECTED_STYLE = 'cursor:pointer;border:1px solid #3fb950;border-radius:8px;' +
-    'padding:10px 14px;background:rgba(63,185,80,0.12);flex:1 1 150px;min-width:130px;max-width:220px;' +
-    'transition:border-color 0.15s,background 0.15s;user-select:none;';
-
-/* ── Тёмно-фиолетовая тема ───────────────────────────────── */
-var CARD_STYLE = 'background:rgba(180,140,255,0.04);border:1px solid rgba(138,92,246,0.22);' +
-                 'border-radius:12px;padding:18px 20px;height:100%;box-sizing:border-box;';
-var CARD_HDR   = 'font-size:0.7em;text-transform:uppercase;letter-spacing:0.08em;color:#b388ff;' +
-                 'margin-bottom:14px;padding-bottom:9px;font-weight:600;' +
-                 'border-bottom:1px solid rgba(138,92,246,0.18);';
-var HR_STYLE   = 'border:none;border-top:1px solid rgba(138,92,246,0.12);margin:10px 0;';
-
-function card(title, nodes) {
-    var inner = Array.isArray(nodes) ? nodes : [nodes];
-    return E('div', { style: CARD_STYLE },
-        (title ? [E('div', { style: CARD_HDR }, title)] : []).concat(inner)
-    );
+function row(label, desc, node) {
+    return E('div', { style: 'margin-bottom:14px;' }, [
+        E('div', { style: 'font-weight:600;margin-bottom:4px;' }, label),
+        E('div', { style: 'font-size:0.85em;color:#6b7280;margin-bottom:6px;' }, desc),
+        node
+    ]);
 }
 
-/* ══════════════════════════════════════════════════════════
-   Основной вид
-   ══════════════════════════════════════════════════════════ */
+function card(title, nodes) {
+    return E('div', {
+        style: 'background:#fff;border:1px solid #d0d7de;border-radius:12px;padding:16px;box-sizing:border-box;height:100%;'
+    }, [
+        E('div', { style: 'font-size:0.75em;text-transform:uppercase;letter-spacing:0.08em;color:#57606a;margin-bottom:14px;font-weight:700;' }, title)
+    ].concat(Array.isArray(nodes) ? nodes : [nodes]));
+}
 
 return view.extend({
-
-    _hwid                : null,
-    _statusTimer         : null,
-    _logsTimer           : null,
-    _statusEl            : null,
-    _logsEl              : null,
-    _startBtn            : null,
-    _stopBtn             : null,
-    _transportSel        : null,
-    _carrierSel          : null,
-    _roomInput           : null,
-    _clientInput         : null,
-    _keyInput            : null,
-    _vp8Section          : null,
-    _seiSection          : null,
-    _videoSection        : null,
-    _datachannelHint     : null,
-    _qrRows              : null,
-    _tileRows            : null,
+    _statusEl: null,
+    _logsEl: null,
+    _statusTimer: null,
+    _logsTimer: null,
+    _startBtn: null,
+    _stopBtn: null,
+    _providerSel: null,
+    _transportSel: null,
+    _roomInput: null,
+    _keyInput: null,
+    _vp8Section: null,
+    _seiSection: null,
+    _videoSection: null,
+    _dataHint: null,
     _transportParamInputs: null,
-    _uriLabel            : null,
-    _uriInput            : null,
-    _subsContainer       : null,
-    _subscriptions       : null,   /* [{sectionName, url, blockEl, timer}] */
-    _selectedServer      : null,   /* {data, card, normalStyle, values} */
-    _updateMatrix        : null,
+    _subsContainer: null,
+    _subscriptions: null,
+    _selectedServer: null,
+    _matrixCells: null,
+    _comboNote: null,
 
     load: function () {
         return Promise.all([ uci.load('olcrtc'), getStatus() ]);
     },
 
-    /* Загрузка подписки с правильными заголовками */
-    _fetchSub: function (url) {
-        var hwid = this._hwid || '';
-        var args = ['-q', '-O', '-', '--timeout=15',
-                    '-U', 'olcrtc-openwrt'];
-        if (hwid) args.push('--header=X-HWID: ' + hwid);
-        args.push('--header=Accept-Encoding: gzip');
-        args.push(url);
-        return callExec('/usr/bin/wget', args, null)
-            .then(function (res) { return res || ''; });
-    },
-
     _saveField: function (key, value) {
         var vals = {};
         vals[key] = value;
-        callUciSet('olcrtc', 'config', vals)
+        return callUciSet('olcrtc', 'config', vals)
             .then(function () { return callUciCommit('olcrtc'); })
-            .catch(function (e) { console.error('[OlcRTC] UCI error:', e); });
+            .catch(function (err) { console.error('[OlcRTC] UCI save error:', err); });
+    },
+
+    _saveFields: function (vals) {
+        return callUciSet('olcrtc', 'config', vals)
+            .then(function () { return callUciCommit('olcrtc'); })
+            .catch(function (err) { console.error('[OlcRTC] UCI bulk save error:', err); });
     },
 
     _updateUI: function (status) {
         if (this._statusEl) {
-            this._statusEl.innerHTML = (status.running ? '🟢' : '🔴') + ' <strong>' +
-                (status.running
-                    ? 'Работает' + (status.pid ? ' (PID ' + status.pid + ')' : '')
-                    : 'Остановлен') +
-                '</strong>';
+            this._statusEl.textContent = status.running
+                ? 'Работает' + (status.pid ? ' (PID ' + status.pid + ')' : '')
+                : 'Остановлен';
+            this._statusEl.style.color = status.running ? '#1a7f37' : '#cf222e';
         }
-        if (this._startBtn) {
-            this._startBtn.disabled      = !!status.running;
-            this._startBtn.style.opacity = status.running ? '0.5' : '1';
-        }
-        if (this._stopBtn) {
-            this._stopBtn.disabled       = !status.running;
-            this._stopBtn.style.opacity  = !status.running ? '0.5' : '1';
-        }
+        if (this._startBtn) this._startBtn.disabled = !!status.running;
+        if (this._stopBtn) this._stopBtn.disabled = !status.running;
     },
 
     _startPolling: function () {
         var self = this;
         if (self._statusTimer) clearInterval(self._statusTimer);
-        self._statusTimer = setInterval(function () {
-            getStatus().then(function (s) { self._updateUI(s); });
-        }, 300);
-
         if (self._logsTimer) clearInterval(self._logsTimer);
+
+        self._statusTimer = setInterval(function () {
+            getStatus().then(function (status) { self._updateUI(status); });
+        }, 1500);
+
         self._logsTimer = setInterval(function () {
             getLogs().then(function (text) {
                 if (!self._logsEl) return;
@@ -420,828 +417,623 @@ return view.extend({
         }, 3000);
     },
 
-    _updateTransportSections: function (transport) {
-        if (this._vp8Section)      this._vp8Section.style.display      = transport === 'vp8channel'   ? '' : 'none';
-        if (this._seiSection)      this._seiSection.style.display      = transport === 'seichannel'   ? '' : 'none';
-        if (this._videoSection)    this._videoSection.style.display    = transport === 'videochannel' ? '' : 'none';
-        if (this._datachannelHint) this._datachannelHint.style.display = transport === 'datachannel'  ? '' : 'none';
-    },
-
-    _updateTransportOptions: function (carrier) {
-        var sel = this._transportSel;
-        if (!sel) return;
-        var allowed = COMPAT[carrier] || COMPAT['telemost'];
-        for (var i = 0; i < sel.options.length; i++)
-            sel.options[i].disabled = allowed.indexOf(sel.options[i].value) === -1;
-        if (allowed.indexOf(sel.value) === -1) {
-            sel.value = 'vp8channel';
-            this._saveField('transport', 'vp8channel');
-        }
-        this._updateTransportSections(sel.value);
-    },
-
-    _updateVideoCodecRows: function (codec) {
-        if (this._qrRows)   this._qrRows.forEach(function (el)  { el.style.display = codec === 'qrcode' ? '' : 'none'; });
-        if (this._tileRows) this._tileRows.forEach(function (el) { el.style.display = codec === 'tile'   ? '' : 'none'; });
-    },
-
-    /* ── Выбранный сервер ─────────────────────────────────── */
-
-    _checkServerSelection: function (field, value) {
-        if (!this._selectedServer) return;
-        if (this._selectedServer.values[field] === value) return;
-        this._selectedServer.card.style.cssText = this._selectedServer.normalStyle;
-        this._selectedServer = null;
-    },
-
-    _applyServer: function (server, cardEl, normalStyle) {
+    _runAction: function (action) {
         var self = this;
-        var p    = server.parsed;
+        return callInitAction('olcrtc', action)
+            .then(function () { return ui.showModal(null, [ E('p', {}, 'Команда отправлена: ' + action) ]); })
+            .then(function () { setTimeout(function () { ui.hideModal(); }, 700); })
+            .then(function () { return getStatus(); })
+            .then(function (status) { self._updateUI(status); })
+            .catch(function (err) {
+                ui.addNotification(null, E('p', {}, 'Не удалось выполнить действие: ' + err));
+            });
+    },
 
-        if (self._selectedServer) self._selectedServer.card.style.cssText = self._selectedServer.normalStyle;
+    _updateTransportVisibility: function (transport) {
+        if (this._vp8Section) this._vp8Section.style.display = transport === 'vp8channel' ? '' : 'none';
+        if (this._seiSection) this._seiSection.style.display = transport === 'seichannel' ? '' : 'none';
+        if (this._videoSection) this._videoSection.style.display = transport === 'videochannel' ? '' : 'none';
+        if (this._dataHint) this._dataHint.style.display = transport === 'datachannel' ? '' : 'none';
+    },
 
-        if (self._carrierSel)   self._carrierSel.value    = p.carrier;
-        if (self._transportSel) self._transportSel.value  = p.transport;
-        if (self._roomInput)    self._roomInput.value     = p.room_id;
-        if (self._clientInput)  self._clientInput.value   = p.client_id;
-        if (self._keyInput)     self._keyInput.value      = p.key;
+    _updateMatrix: function (provider, transport) {
+        var cells = this._matrixCells || {};
+        Object.keys(cells).forEach(function (key) {
+            var cell = cells[key];
+            cell.style.outline = '';
+            cell.style.outlineOffset = '';
+        });
+        var active = cells[provider + ':' + transport];
+        if (active) {
+            active.style.outline = '2px solid #0969da';
+            active.style.outlineOffset = '-2px';
+        }
 
-        self._updateTransportOptions(p.carrier);
-        if (self._updateMatrix) self._updateMatrix(p.carrier, p.transport);
+        if (this._comboNote) {
+            var kind = compatibilityKind(provider, transport);
+            var meta = statusMeta(kind);
+            this._comboNote.textContent = meta.icon + ' ' + meta.text;
+            this._comboNote.style.color = meta.color;
+        }
+    },
 
-        var tp = p.transportParams || {};
-        var uciVals = {
-            carrier: p.carrier, transport: p.transport,
-            room_id: p.room_id, client_id: p.client_id, key: p.key
+    _warnForCombo: function (provider, transport) {
+        var kind = compatibilityKind(provider, transport);
+        var meta = statusMeta(kind);
+        return E('div', {
+            style: 'margin-top:10px;padding:10px 12px;border-radius:8px;background:#f6f8fa;border:1px solid #d0d7de;color:' + meta.color + ';'
+        }, meta.icon + ' ' + meta.text);
+    },
+
+    _collectConfig: function () {
+        return {
+            auth_provider: uci.get('olcrtc', 'config', 'auth_provider') || 'jitsi',
+            transport: uci.get('olcrtc', 'config', 'transport') || 'datachannel',
+            room_id: uci.get('olcrtc', 'config', 'room_id') || '',
+            key: uci.get('olcrtc', 'config', 'key') || '',
+            socks_host: uci.get('olcrtc', 'config', 'socks_host') || '127.0.0.1',
+            socks_port: uci.get('olcrtc', 'config', 'socks_port') || '1080',
+            socks_user: uci.get('olcrtc', 'config', 'socks_user') || '',
+            socks_pass: uci.get('olcrtc', 'config', 'socks_pass') || '',
+            dns: uci.get('olcrtc', 'config', 'dns') || '1.1.1.1:53',
+            data_dir: uci.get('olcrtc', 'config', 'data_dir') || '/var/lib/olcrtc',
+            debug: uci.get('olcrtc', 'config', 'debug') || '0',
+            vp8_fps: uci.get('olcrtc', 'config', 'vp8_fps') || '60',
+            vp8_batch: uci.get('olcrtc', 'config', 'vp8_batch') || '64',
+            sei_fps: uci.get('olcrtc', 'config', 'sei_fps') || '60',
+            sei_batch: uci.get('olcrtc', 'config', 'sei_batch') || '64',
+            sei_frag: uci.get('olcrtc', 'config', 'sei_frag') || '900',
+            sei_ack_ms: uci.get('olcrtc', 'config', 'sei_ack_ms') || '2000',
+            video_codec: uci.get('olcrtc', 'config', 'video_codec') || 'qrcode',
+            video_w: uci.get('olcrtc', 'config', 'video_w') || '1920',
+            video_h: uci.get('olcrtc', 'config', 'video_h') || '1080',
+            video_fps: uci.get('olcrtc', 'config', 'video_fps') || '30',
+            video_bitrate: uci.get('olcrtc', 'config', 'video_bitrate') || '2M',
+            video_hw: uci.get('olcrtc', 'config', 'video_hw') || 'none',
+            video_qr_recovery: uci.get('olcrtc', 'config', 'video_qr_recovery') || 'low',
+            video_qr_size: uci.get('olcrtc', 'config', 'video_qr_size') || '0',
+            video_tile_module: uci.get('olcrtc', 'config', 'video_tile_module') || '4',
+            video_tile_rs: uci.get('olcrtc', 'config', 'video_tile_rs') || '20',
+            ffmpeg: uci.get('olcrtc', 'config', 'ffmpeg') || 'ffmpeg'
         };
-        Object.keys(tp).forEach(function (k) {
-            uciVals[k] = tp[k];
-            if (self._transportParamInputs && self._transportParamInputs[k]) {
-                var el = self._transportParamInputs[k];
-                el.value = tp[k];
-                if (k === 'video_codec') self._updateVideoCodecRows(tp[k]);
-            }
+    },
+
+    _applyServer: function (server, cardEl, baseStyle) {
+        var self = this;
+        var p = server.parsed;
+        var vals = {
+            auth_provider: p.auth_provider,
+            transport: p.transport,
+            room_id: p.room_id,
+            key: p.key
+        };
+
+        Object.keys(p.transportParams || {}).forEach(function (key) {
+            vals[key] = p.transportParams[key];
         });
 
-        callUciSet('olcrtc', 'config', uciVals)
-            .then(function () { return callUciCommit('olcrtc'); })
-            .catch(function (e) { console.error('[OlcRTC] apply server error:', e); });
+        self._saveFields(vals).then(function () {
+            if (self._providerSel) self._providerSel.value = p.auth_provider;
+            if (self._transportSel) self._transportSel.value = p.transport;
+            if (self._roomInput) self._roomInput.value = p.room_id;
+            if (self._keyInput) self._keyInput.value = p.key;
 
-        self._selectedServer = {
-            data       : server,
-            card       : cardEl,
-            normalStyle: normalStyle,
-            values     : { carrier: p.carrier, transport: p.transport,
-                           room_id: p.room_id, client_id: p.client_id, key: p.key }
-        };
-        cardEl.style.cssText = CARD_SELECTED_STYLE;
+            Object.keys(p.transportParams || {}).forEach(function (key) {
+                if (self._transportParamInputs[key]) self._transportParamInputs[key].value = p.transportParams[key];
+            });
+
+            self._updateTransportVisibility(p.transport);
+            self._updateMatrix(p.auth_provider, p.transport);
+
+            if (self._selectedServer) self._selectedServer.card.style.cssText = self._selectedServer.baseStyle;
+            self._selectedServer = { card: cardEl, baseStyle: baseStyle };
+            cardEl.style.cssText = baseStyle + 'border-color:#1f883d;background:#eefbf3;';
+        });
     },
 
-    /* ══════════════════════════════════════════════════════════
-       Управление подписками
-       ══════════════════════════════════════════════════════════ */
+    _fetchSubscription: function (url) {
+        var hwid = uci.get('olcrtc', 'config', 'hwid') || '';
+        var args = [ '-q', '-O', '-', '--timeout=15', '-U', 'olcrtc-openwrt' ];
+        if (hwid) args.push('--header=X-HWID: ' + hwid);
+        args.push('--header=Accept-Encoding: gzip');
+        args.push(url);
+        return execStdout('/usr/bin/wget', args, null);
+    },
 
-    /* Заполнить содержимое блока подписки */
-    _fillSubBlock: function (blockEl, entry, sub) {
+    _renderSubscriptionBlock: function (entry, sub) {
         var self = this;
+        entry.blockEl.innerHTML = '';
 
-        /* Если в блоке была выбранная карточка — сбрасываем */
-        if (self._selectedServer && blockEl.contains(self._selectedServer.card))
-            self._selectedServer = null;
+        var header = [
+            E('div', { style: 'font-weight:700;font-size:1.05em;margin-bottom:4px;' }, (sub.icon ? sub.icon + ' ' : '') + (sub.name || entry.url)),
+            E('div', { style: 'font-size:0.82em;color:#57606a;margin-bottom:2px;' }, 'URL: ' + entry.url),
+            E('div', { style: 'font-size:0.82em;color:#57606a;margin-bottom:10px;' },
+                'Обновлено: ' + (sub.update ? fmtDate(sub.update) : 'неизвестно') +
+                ' | refresh: ' + refreshLabel(sub.refresh))
+        ];
 
-        blockEl.innerHTML = '';
+        var wrap = E('div', { style: 'display:flex;gap:10px;flex-wrap:wrap;' }, []);
+        sub.servers.forEach(function (server, idx) {
+            var p = server.parsed;
+            var kind = compatibilityKind(p.auth_provider, p.transport);
+            var meta = statusMeta(kind);
+            var title = server.name || (server.icon ? server.icon + ' ' : '') || (p.mimo ? p.mimo.split('/')[0].trim() : '');
+            if (!title) title = 'Server ' + (idx + 1);
+            var baseStyle = 'cursor:pointer;flex:1 1 220px;min-width:220px;max-width:320px;padding:12px;' +
+                'border:1px solid #d0d7de;border-radius:10px;background:#fff;';
+            var cardEl = E('div', { style: baseStyle, click: function () { self._applyServer(server, cardEl, baseStyle); } }, [
+                E('div', { style: 'display:flex;justify-content:space-between;gap:8px;margin-bottom:6px;' }, [
+                    E('strong', {}, title),
+                    E('span', { style: 'color:' + meta.color + ';font-size:0.82em;' }, meta.icon)
+                ]),
+                E('div', { style: 'font-size:0.84em;color:#57606a;margin-bottom:3px;' }, PROVIDER_LABELS[p.auth_provider] + ' / ' + TRANSPORT_LABELS[p.transport]),
+                server.comment ? E('div', { style: 'font-size:0.82em;color:#57606a;margin-bottom:3px;' }, server.comment) : null,
+                server.ip ? E('div', { style: 'font-size:0.82em;color:#57606a;margin-bottom:3px;' }, 'IP: ' + server.ip) : null,
+                server.available ? E('div', { style: 'font-size:0.82em;color:#57606a;' }, 'Available: ' + server.available) : null
+            ].filter(Boolean));
+            wrap.appendChild(cardEl);
+        });
 
-        /* Применить цвет подписки к фону блока */
-        var subBg     = sub.color ? hexToRgba(sub.color, 0.05) : '';
-        var subBorder = sub.color ? hexToRgba(sub.color, 0.3)  : 'rgba(138,92,246,0.18)';
-        blockEl.style.background   = subBg || '';
-        blockEl.style.borderColor  = subBorder;
-
-        /* Заголовок */
-        var title = (sub.icon ? sub.icon + ' ' : '') + (sub.name || 'Подписка');
-        var stats = (sub.used ? sub.used : '') + (sub.available ? ' / ' + sub.available : '');
-        var refreshInfo = '↻ каждые ' + refreshLabel(sub.refresh);
-
-        var deleteBtn = E('button', {
-            class : 'btn cbi-button cbi-button-remove',
-            style : 'font-size:0.78em;padding:3px 10px;white-space:nowrap;',
-            click : function () { self._removeSubscription(entry.sectionName); }
+        var removeBtn = E('button', {
+            class: 'btn cbi-button cbi-button-remove',
+            click: ui.createHandlerFn(this, function () {
+                self._removeSubscription(entry.sectionName);
+            })
         }, 'Удалить подписку');
 
-        var headerRow = E('div', {
-            style: 'display:flex;justify-content:space-between;align-items:flex-start;' +
-                   'flex-wrap:wrap;gap:8px;margin-bottom:6px;'
-        }, [
-            E('div', {}, [
-                E('div', { style: 'font-size:1em;color:#e6edf3;font-weight:500;' },
-                    title + (stats ? ' ' + stats : '')),
-                E('div', { style: 'font-size:0.8em;color:#8b949e;margin-top:2px;' }, refreshInfo)
-            ]),
-            deleteBtn
-        ]);
-        blockEl.appendChild(headerRow);
+        entry.blockEl.appendChild(card(null, header.concat([ wrap, E('div', { style: 'margin-top:12px;' }, [removeBtn]) ])));
+    },
 
-        if (sub.update) {
-            blockEl.appendChild(E('div', {
-                style: 'font-size:0.75em;color:#8b949e;margin-bottom:10px;'
-            }, 'Данные от: ' + fmtDate(sub.update)));
-        } else {
-            blockEl.appendChild(E('div', { style: 'margin-bottom:10px;' }));
-        }
+    _scheduleSubscription: function (entry) {
+        var self = this;
+        if (entry.timer) clearTimeout(entry.timer);
+        entry.timer = setTimeout(function () {
+            self._refreshSubscription(entry);
+        }, entry.refreshMs || 10 * 60 * 1000);
+    },
 
-        /* Карточки серверов */
-        var cardsWrap = E('div', { style: 'display:flex;flex-wrap:wrap;gap:10px;' });
-
-        sub.servers.forEach(function (server, idx) {
-            var p    = server.parsed;
-            var name = server.name ||
-                       (p.mimo ? p.mimo.split('/')[0].trim() : 'Сервер ' + (idx + 1));
-
-            /* Цвет карточки */
-            var cardBg     = server.color ? hexToRgba(server.color, 0.07) : 'rgba(138,92,246,0.06)';
-            var cardBorder = server.color ? hexToRgba(server.color, 0.35) : 'rgba(138,92,246,0.2)';
-            var normalStyle = 'cursor:pointer;border:1px solid ' + cardBorder + ';border-radius:8px;' +
-                              'padding:10px 14px;background:' + cardBg + ';flex:1 1 150px;' +
-                              'min-width:130px;max-width:220px;' +
-                              'transition:border-color 0.15s,background 0.15s;user-select:none;';
-
-            var lines = [
-                E('div', { style: 'font-size:0.95em;color:#e6edf3;font-weight:500;margin-bottom:4px;' +
-                                  'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;' },
-                    (server.icon ? server.icon + ' ' : '') + name),
-                E('div', { style: 'font-size:0.78em;color:#8b949e;' },
-                    p.carrier + ' / ' + p.transport)
-            ];
-            if (server.ip)      lines.push(E('div', { style: 'font-size:0.78em;color:#8b949e;font-family:monospace;' }, server.ip));
-            if (server.comment) lines.push(E('div', { style: 'font-size:0.78em;color:#8b949e;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;' }, server.comment));
-            if (server.used || server.available)
-                lines.push(E('div', { style: 'font-size:0.75em;color:#8b949e;margin-top:4px;' },
-                    (server.used || '') + (server.available ? ' / ' + server.available : '')));
-
-            var card = E('div', { style: normalStyle }, lines);
-
-            /* Восстановить подсветку после обновления если это тот же объект */
-            if (self._selectedServer && self._selectedServer.data === server) {
-                self._selectedServer.card       = card;
-                self._selectedServer.normalStyle = normalStyle;
-                card.style.cssText = CARD_SELECTED_STYLE;
+    _refreshSubscription: function (entry) {
+        var self = this;
+        return self._fetchSubscription(entry.url).then(function (text) {
+            var sub = parseSubscription(text);
+            if (!sub) {
+                entry.blockEl.innerHTML = '';
+                entry.blockEl.appendChild(card('Подписка', [
+                    E('div', { style: 'color:#cf222e;' }, 'Не удалось разобрать sub.md')
+                ]));
+                return;
             }
-
-            card.addEventListener('click', function () { self._applyServer(server, card, normalStyle); });
-            cardsWrap.appendChild(card);
+            entry.refreshMs = sub.refreshMs;
+            self._renderSubscriptionBlock(entry, sub);
+            self._scheduleSubscription(entry);
+        }).catch(function (err) {
+            entry.blockEl.innerHTML = '';
+            entry.blockEl.appendChild(card('Подписка', [
+                E('div', { style: 'color:#cf222e;' }, 'Ошибка загрузки: ' + err)
+            ]));
         });
-
-        blockEl.appendChild(cardsWrap);
     },
 
-    /* Создать блок подписки (fetches URL, если sub не передан) */
-    _createSubBlock: function (sectionName, url, subInitial) {
+    _createSubscription: function (sectionName, url) {
         var self = this;
+        var blockEl = E('div', { style: 'margin-top:12px;' }, []);
+        self._subsContainer.appendChild(blockEl);
 
-        var blockEl = E('div', {
-            style: 'border:1px solid rgba(138,92,246,0.18);border-radius:8px;padding:14px;margin-bottom:12px;'
-        }, [E('div', { style: 'color:#9a7fc0;font-size:0.9em;' }, '⌛ Загрузка подписки...')]);
-
-        var entry = { sectionName: sectionName, url: url, blockEl: blockEl, timer: null };
-        if (!self._subscriptions) self._subscriptions = [];
-        self._subscriptions.push(entry);
-
-        if (self._subsContainer) self._subsContainer.appendChild(blockEl);
-
-        function applyAndSchedule(sub) {
-            self._fillSubBlock(blockEl, entry, sub);
-            if (entry.timer) clearInterval(entry.timer);
-            if (sub.refreshMs > 0) {
-                entry.timer = setInterval(function () {
-                    self._fetchSub(url)
-                        .then(function (c) {
-                            if (!c) return;
-                            var updated = parseSubscription(c);
-                            if (updated) applyAndSchedule(updated);
-                        });
-                }, sub.refreshMs);
-            }
-        }
-
-        if (subInitial) {
-            applyAndSchedule(subInitial);
-        } else {
-            self._fetchSub(url)
-                .then(function (content) {
-                    if (!content) return Promise.reject(new Error('empty'));
-                    var sub = parseSubscription(content);
-                    if (!sub) return Promise.reject(new Error('invalid'));
-                    applyAndSchedule(sub);
-                })
-                .catch(function () {
-                    blockEl.innerHTML = '';
-                    var delBtn = E('button', {
-                        class : 'btn cbi-button cbi-button-remove',
-                        style : 'font-size:0.78em;padding:3px 10px;margin-left:10px;',
-                        click : function () { self._removeSubscription(sectionName); }
-                    }, 'Удалить');
-                    blockEl.appendChild(E('div', {
-                        style: 'display:flex;align-items:center;gap:8px;color:#f85149;font-size:0.85em;'
-                    }, [
-                        E('span', {}, '✗ Не удалось загрузить: ' + url),
-                        delBtn
-                    ]));
-                });
-        }
-    },
-
-    /* Добавить подписку по URL (из поля ввода) */
-    _addSubscription: function (url) {
-        var self = this;
-
-        if (self._uriLabel) {
-            self._uriLabel.textContent = '⌛ Загрузка подписки...';
-            self._uriLabel.style.color = '#8b949e';
-        }
-        if (self._uriInput) self._uriInput.style.outline = '';
-
-        return self._fetchSub(url)
-            .then(function (content) {
-                if (!content) return Promise.reject(new Error('empty'));
-                var sub = parseSubscription(content);
-                if (!sub) return Promise.reject(new Error('invalid'));
-
-                return callUciAdd('olcrtc', 'subscription')
-                    .then(function (sectionName) {
-                        return callUciSet('olcrtc', sectionName, { url: url })
-                            .then(function () { return callUciCommit('olcrtc'); })
-                            .then(function () {
-                                self._createSubBlock(sectionName, url, sub);
-
-                                if (self._uriLabel) {
-                                    self._uriLabel.textContent = '✓ Подписка добавлена!';
-                                    self._uriLabel.style.color = '#3fb950';
-                                }
-                                if (self._uriInput) {
-                                    self._uriInput.style.outline = '2px solid #3fb950';
-                                    self._uriInput.value = '';
-                                    setTimeout(function () {
-                                        if (self._uriInput) self._uriInput.style.outline = '';
-                                        if (self._uriLabel) self._uriLabel.textContent = '';
-                                    }, 2500);
-                                }
-                            });
-                    });
-            })
-            .catch(function () {
-                if (self._uriLabel) {
-                    self._uriLabel.textContent = '✗ Невалидная ссылка на подписку';
-                    self._uriLabel.style.color = '#f85149';
-                }
-                if (self._uriInput) self._uriInput.style.outline = '2px solid #f85149';
-            });
-    },
-
-    /* Удалить подписку */
-    _removeSubscription: function (sectionName) {
-        var self = this;
-        if (!self._subscriptions) return;
-
-        for (var i = 0; i < self._subscriptions.length; i++) {
-            var entry = self._subscriptions[i];
-            if (entry.sectionName !== sectionName) continue;
-
-            if (entry.timer) clearInterval(entry.timer);
-            if (entry.blockEl && entry.blockEl.parentNode)
-                entry.blockEl.parentNode.removeChild(entry.blockEl);
-
-            /* Сбросить выбранный сервер если он был из этого блока */
-            if (self._selectedServer && !document.body.contains(self._selectedServer.card))
-                self._selectedServer = null;
-
-            self._subscriptions.splice(i, 1);
-            break;
-        }
-
-        callUciDelete('olcrtc', sectionName)
-            .then(function () { return callUciCommit('olcrtc'); })
-            .catch(function (e) { console.error('[OlcRTC] delete sub error:', e); });
-    },
-
-    /* ══════════════════════════════════════════════════════════
-       render()
-       ══════════════════════════════════════════════════════════ */
-
-    render: function (data) {
-        var self       = this;
-        var initStatus = data[1];
-
-        self._subscriptions = [];
-        self._hwid = uci.get('olcrtc', 'config', 'hwid') || '';
-
-        var cfg = {
-            carrier          : uci.get('olcrtc', 'config', 'carrier')           || 'telemost',
-            transport        : uci.get('olcrtc', 'config', 'transport')         || 'vp8channel',
-            room_id          : uci.get('olcrtc', 'config', 'room_id')           || '',
-            client_id        : uci.get('olcrtc', 'config', 'client_id')         || '',
-            key              : uci.get('olcrtc', 'config', 'key')               || '',
-            socks_host       : uci.get('olcrtc', 'config', 'socks_host')        || '0.0.0.0',
-            socks_port       : uci.get('olcrtc', 'config', 'socks_port')        || '1080',
-            socks_user       : uci.get('olcrtc', 'config', 'socks_user')        || '',
-            socks_pass       : uci.get('olcrtc', 'config', 'socks_pass')        || '',
-            dns              : uci.get('olcrtc', 'config', 'dns')               || '1.1.1.1:53',
-            debug            : uci.get('olcrtc', 'config', 'debug')             || '0',
-            vp8_fps          : uci.get('olcrtc', 'config', 'vp8_fps')           || '25',
-            vp8_batch        : uci.get('olcrtc', 'config', 'vp8_batch')         || '1',
-            sei_fps          : uci.get('olcrtc', 'config', 'sei_fps')           || '60',
-            sei_batch        : uci.get('olcrtc', 'config', 'sei_batch')         || '64',
-            sei_frag         : uci.get('olcrtc', 'config', 'sei_frag')          || '900',
-            sei_ack_ms       : uci.get('olcrtc', 'config', 'sei_ack_ms')        || '2000',
-            video_codec      : uci.get('olcrtc', 'config', 'video_codec')       || 'qrcode',
-            video_w          : uci.get('olcrtc', 'config', 'video_w')           || '1920',
-            video_h          : uci.get('olcrtc', 'config', 'video_h')           || '1080',
-            video_fps        : uci.get('olcrtc', 'config', 'video_fps')         || '30',
-            video_bitrate    : uci.get('olcrtc', 'config', 'video_bitrate')     || '2M',
-            video_hw         : uci.get('olcrtc', 'config', 'video_hw')          || 'none',
-            video_qr_recovery: uci.get('olcrtc', 'config', 'video_qr_recovery') || 'low',
-            video_qr_size    : uci.get('olcrtc', 'config', 'video_qr_size')     || '0',
-            video_tile_module: uci.get('olcrtc', 'config', 'video_tile_module') || '4',
-            video_tile_rs    : uci.get('olcrtc', 'config', 'video_tile_rs')     || '20',
-            ffmpeg           : uci.get('olcrtc', 'config', 'ffmpeg')            || 'ffmpeg'
+        var entry = {
+            sectionName: sectionName,
+            url: url,
+            blockEl: blockEl,
+            timer: null,
+            refreshMs: 10 * 60 * 1000
         };
 
-        /* ── Статус ─────────────────────────────────────────── */
-        var statusSpan = E('span');
-        self._statusEl = statusSpan;
+        if (!self._subscriptions) self._subscriptions = [];
+        self._subscriptions.push(entry);
+        self._refreshSubscription(entry);
+    },
 
-        var startBtn = E('button', {
-            class : 'btn cbi-button cbi-button-apply',
-            style : 'margin-right:8px',
-            click : ui.createHandlerFn(self, function () {
-                startBtn.disabled = stopBtn.disabled = true;
-                startBtn.style.opacity = stopBtn.style.opacity = '0.5';
-                return callInitAction('olcrtc', 'start')
-                    .then(function () { ui.addNotification(null, E('p', 'OlcRTC запущен'), 'info'); })
-                    .catch(function (e) { ui.addNotification(null, E('p', 'Ошибка запуска: ' + (e.message || e)), 'error'); })
-                    .then(function () { return getStatus().then(function (s) { self._updateUI(s); }); });
-            })
-        }, '▶ Старт');
+    _addSubscription: function (url) {
+        var self = this;
+        var existing = uci.sections('olcrtc', 'subscription').filter(function (section) {
+            return section.url === url;
+        })[0];
 
-        var stopBtn = E('button', {
-            class : 'btn cbi-button cbi-button-reset',
-            click : ui.createHandlerFn(self, function () {
-                startBtn.disabled = stopBtn.disabled = true;
-                startBtn.style.opacity = stopBtn.style.opacity = '0.5';
-                return callInitAction('olcrtc', 'stop')
-                    .then(function () { ui.addNotification(null, E('p', 'OlcRTC остановлен'), 'info'); })
-                    .catch(function (e) { ui.addNotification(null, E('p', 'Ошибка остановки: ' + (e.message || e)), 'error'); })
-                    .then(function () { return getStatus().then(function (s) { self._updateUI(s); }); });
-            })
-        }, '■ Стоп');
-
-        self._startBtn = startBtn;
-        self._stopBtn  = stopBtn;
-        self._updateUI(initStatus);
-
-        var statusSection = card('Статус', [
-            E('div', { style: 'margin-bottom:16px;font-size:1.15em;line-height:1.8;' }, statusSpan),
-            E('div', {}, [startBtn, stopBtn])
-        ]);
-
-        /* ── Helpers ────────────────────────────────────────── */
-        function row(label, hint, inputEl) {
-            return E('div', { style: 'display:flex;align-items:flex-start;gap:10px;margin-bottom:10px;' }, [
-                E('label', { style: 'flex:0 0 155px;font-size:0.82em;color:#b388ff;padding-top:7px;line-height:1.4;' }, label),
-                E('div', { style: 'flex:1;min-width:0;' }, [
-                    inputEl,
-                    hint ? E('div', { style: 'margin-top:3px;font-size:0.78em;color:#7a5f99;' }, hint) : null
-                ].filter(Boolean))
-            ]);
+        if (existing) {
+            ui.addNotification(null, E('p', {}, 'Подписка уже добавлена'));
+            return;
         }
 
-        /* Вертикальная раскладка: название сверху, поле снизу */
-        function rowV(label, hint, inputEl) {
-            return E('div', { style: 'margin-bottom:12px;' }, [
-                E('label', { style: 'display:block;font-size:0.82em;color:#b388ff;margin-bottom:5px;' }, label),
-                E('div', { style: 'width:100%;' }, [inputEl]),
-                hint ? E('div', { style: 'margin-top:3px;font-size:0.78em;color:#7a5f99;' }, hint) : null
-            ].filter(Boolean));
-        }
-
-        function makeDebounced(fieldName, onChange) {
-            var timer;
-            return {
-                change: function (ev) {
-                    clearTimeout(timer);
-                    var v = ev.target.value.trim();
-                    self._saveField(fieldName, v);
-                    if (onChange) onChange(v);
-                },
-                input: function (ev) {
-                    var v = ev.target.value;
-                    clearTimeout(timer);
-                    timer = setTimeout(function () {
-                        var t = v.trim();
-                        self._saveField(fieldName, t);
-                        if (onChange) onChange(t);
-                    }, 600);
-                }
-            };
-        }
-
-        function numInput(fieldName, val, placeholder, min, max) {
-            var attrs = {
-                class: 'cbi-input-text', type: 'number',
-                value: val, placeholder: placeholder, min: String(min),
-                change: function (ev) {
-                    var v = parseInt(ev.target.value, 10);
-                    if (!isNaN(v) && v >= min && (max == null || v <= max))
-                        self._saveField(fieldName, String(v));
-                }
-            };
-            if (max != null) attrs.max = String(max);
-            return E('input', attrs);
-        }
-
-        /* ── Матрица совместимости ───────────────────────────── */
-        var matrixCells = {};
-        var carriers   = ['telemost', 'jazz', 'wbstream'];
-        var transports = ['datachannel', 'vp8channel', 'seichannel', 'videochannel'];
-
-        var TH_STYLE  = 'padding:4px 10px;text-align:center;font-size:0.8em;color:#9a7fc0;font-weight:normal;border-bottom:1px solid rgba(138,92,246,0.18);';
-        var THL_STYLE = 'padding:4px 10px;text-align:left;font-size:0.8em;color:#9a7fc0;font-weight:normal;border-bottom:1px solid rgba(138,92,246,0.18);';
-
-        function cellStyle(active) {
-            return 'padding:4px 10px;text-align:center;font-size:0.85em;' + (active ? 'background:rgba(63,185,80,0.08);' : '');
-        }
-
-        function makeCell(carrier, transport) {
-            var ok    = COMPAT[carrier].indexOf(transport) !== -1;
-            var isCur = (carrier === cfg.carrier && transport === cfg.transport);
-            var td    = E('td', { style: cellStyle(isCur) },
-                ok ? E('span', { style: 'color:#3fb950;font-size:1.1em;' }, '✓')
-                   : E('span', { style: 'color:#f85149;font-size:1.1em;' }, '✗'));
-            matrixCells[carrier + '-' + transport] = td;
-            return td;
-        }
-
-        function updateMatrix(selC, selT) {
-            carriers.forEach(function (c) {
-                transports.forEach(function (t) {
-                    var td    = matrixCells[c + '-' + t];
-                    var ok    = COMPAT[c].indexOf(t) !== -1;
-                    var isCur = (c === selC && t === selT);
-                    td.style.cssText = cellStyle(isCur);
-                    var icon = td.querySelector('span');
-                    if (icon) icon.style.cssText = ok ? 'color:#3fb950;font-size:1.1em;' : 'color:#f85149;font-size:1.1em;';
-                    var thEl = matrixCells['__th_' + c];
-                    if (thEl) thEl.style.color = (c === selC) ? '#e6edf3' : '#8b949e';
+        callUciAdd('olcrtc', 'subscription')
+            .then(function (res) {
+                var section = res.section;
+                return callUciSet('olcrtc', section, { url: url }).then(function () {
+                    return callUciCommit('olcrtc').then(function () { return section; });
                 });
+            })
+            .then(function (sectionName) {
+                self._createSubscription(sectionName, url);
+            })
+            .catch(function (err) {
+                ui.addNotification(null, E('p', {}, 'Не удалось добавить подписку: ' + err));
+            });
+    },
+
+    _removeSubscription: function (sectionName) {
+        var self = this;
+        callUciDelete('olcrtc', sectionName)
+            .then(function () { return callUciCommit('olcrtc'); })
+            .then(function () {
+                if (!self._subscriptions) return;
+                for (var i = 0; i < self._subscriptions.length; i++) {
+                    if (self._subscriptions[i].sectionName === sectionName) {
+                        if (self._subscriptions[i].timer) clearTimeout(self._subscriptions[i].timer);
+                        self._subscriptions[i].blockEl.remove();
+                        self._subscriptions.splice(i, 1);
+                        break;
+                    }
+                }
+            })
+            .catch(function (err) {
+                ui.addNotification(null, E('p', {}, 'Не удалось удалить подписку: ' + err));
+            });
+    },
+
+    render: function (data) {
+        var self = this;
+        var cfg = self._collectConfig();
+        var status = data[1];
+
+        self._subscriptions = [];
+        self._matrixCells = {};
+
+        function textInput(key, value, placeholder, extraHandler) {
+            return E('input', {
+                class: 'cbi-input-text',
+                type: 'text',
+                value: value,
+                placeholder: placeholder || '',
+                change: function (ev) {
+                    self._saveField(key, ev.target.value);
+                    if (extraHandler) extraHandler(ev.target.value);
+                }
             });
         }
-        self._updateMatrix = updateMatrix;
 
-        var headerCells = [E('th', { style: THL_STYLE }, '')].concat(
-            carriers.map(function (c) {
-                var names = { telemost: 'Telemost', jazz: 'Jazz', wbstream: 'WBStream' };
-                var th = E('th', { style: TH_STYLE + (c === cfg.carrier ? 'color:#e6edf3;' : '') }, names[c]);
-                matrixCells['__th_' + c] = th;
-                return th;
-            })
-        );
+        function numInput(key, value, placeholder, min, max) {
+            return E('input', {
+                class: 'cbi-input-text',
+                type: 'number',
+                value: value,
+                placeholder: placeholder || '',
+                min: String(min),
+                max: String(max),
+                change: function (ev) {
+                    self._saveField(key, ev.target.value);
+                }
+            });
+        }
 
-        var tLabels = { datachannel: 'DataCh', vp8channel: 'VP8Ch', seichannel: 'SEICh', videochannel: 'VideoCh' };
-        var matrixRows = transports.map(function (t) {
-            return E('tr', {}, [E('td', { style: 'padding:4px 10px;font-size:0.8em;color:#8b949e;' }, tLabels[t])].concat(
-                carriers.map(function (c) { return makeCell(c, t); })
-            ));
+        var statusEl = E('div', { style: 'font-size:1.1em;font-weight:700;margin-bottom:12px;' }, '');
+        self._statusEl = statusEl;
+
+        var startBtn = E('button', {
+            class: 'btn cbi-button cbi-button-action',
+            click: ui.createHandlerFn(this, function () { return self._runAction('start'); })
+        }, 'Start');
+        var stopBtn = E('button', {
+            class: 'btn cbi-button cbi-button-remove',
+            style: 'margin-left:8px;',
+            click: ui.createHandlerFn(this, function () { return self._runAction('stop'); })
+        }, 'Stop');
+        self._startBtn = startBtn;
+        self._stopBtn = stopBtn;
+        self._updateUI(status);
+
+        var statusCard = card('Сервис', [
+            statusEl,
+            E('div', { style: 'font-size:0.85em;color:#57606a;margin-bottom:12px;' },
+                'Сервис запускает universal-carrier через YAML: /etc/olcrtc/client.yaml'),
+            E('div', {}, [ startBtn, stopBtn ])
+        ]);
+
+        var uriHint = E('div', { style: 'font-size:0.82em;color:#57606a;margin-top:6px;' },
+            'Поддерживается olcrtc://... и https://... на sub.md');
+        var uriInput = E('input', {
+            class: 'cbi-input-text',
+            type: 'text',
+            placeholder: 'olcrtc://... или https://example.com/sub.md',
+            style: 'font-family:monospace;',
+            change: function (ev) {
+                var val = (ev.target.value || '').trim();
+                if (!val) return;
+
+                if (val.indexOf('http://') === 0 || val.indexOf('https://') === 0) {
+                    self._addSubscription(val);
+                    ev.target.value = '';
+                    return;
+                }
+
+                var parsed = parseOlcrtcUri(val);
+                if (!parsed) {
+                    ui.addNotification(null, E('p', {}, 'Неверный формат URI'));
+                    return;
+                }
+
+                var vals = {
+                    auth_provider: parsed.auth_provider,
+                    transport: parsed.transport,
+                    room_id: parsed.room_id,
+                    key: parsed.key
+                };
+                Object.keys(parsed.transportParams || {}).forEach(function (k) {
+                    vals[k] = parsed.transportParams[k];
+                });
+
+                self._saveFields(vals).then(function () {
+                    self._providerSel.value = parsed.auth_provider;
+                    self._transportSel.value = parsed.transport;
+                    self._roomInput.value = parsed.room_id;
+                    self._keyInput.value = parsed.key;
+                    Object.keys(parsed.transportParams || {}).forEach(function (k) {
+                        if (self._transportParamInputs[k]) self._transportParamInputs[k].value = parsed.transportParams[k];
+                    });
+                    self._updateTransportVisibility(parsed.transport);
+                    self._updateMatrix(parsed.auth_provider, parsed.transport);
+                    ui.addNotification(null, E('p', {}, 'Параметры из URI применены'));
+                });
+            }
         });
 
-        var matrixTable = E('table', { style: 'border-collapse:collapse;margin-bottom:4px;' }, [
-            E('thead', {}, [E('tr', {}, headerCells)]),
-            E('tbody', {}, matrixRows)
+        self._subsContainer = E('div', {}, []);
+        var uriCard = card('URI и подписки', [
+            uriInput,
+            uriHint,
+            self._subsContainer
         ]);
 
-        /* ── Carrier / Transport ─────────────────────────────── */
-        var allowed = COMPAT[cfg.carrier] || COMPAT['telemost'];
-
-        var carrierSel = E('select', {
-            class  : 'cbi-input-select',
-            change : function (ev) {
-                var c = ev.target.value;
-                self._saveField('carrier', c);
-                self._updateTransportOptions(c);
-                updateMatrix(c, transportSel.value);
-                self._checkServerSelection('carrier', c);
+        var providerSel = E('select', {
+            class: 'cbi-input-select',
+            change: function (ev) {
+                self._saveField('auth_provider', ev.target.value);
+                self._updateMatrix(ev.target.value, transportSel.value);
             }
         }, [
-            E('option', { value: 'telemost', selected: cfg.carrier === 'telemost' ? '' : null }, 'Telemost (telemost.yandex.ru)'),
-            E('option', { value: 'jazz',     selected: cfg.carrier === 'jazz'     ? '' : null }, 'Jazz (salutejazz.ru)'),
-            E('option', { value: 'wbstream', selected: cfg.carrier === 'wbstream' ? '' : null }, 'Wildberries Stream (stream.wb.ru)')
+            E('option', { value: 'jitsi', selected: cfg.auth_provider === 'jitsi' ? '' : null }, 'Jitsi'),
+            E('option', { value: 'wbstream', selected: cfg.auth_provider === 'wbstream' ? '' : null }, 'WBStream'),
+            E('option', { value: 'telemost', selected: cfg.auth_provider === 'telemost' ? '' : null }, 'Telemost')
         ]);
-        self._carrierSel = carrierSel;
+        self._providerSel = providerSel;
 
         var transportSel = E('select', {
-            class  : 'cbi-input-select',
-            change : function (ev) {
-                var t = ev.target.value;
-                self._saveField('transport', t);
-                updateMatrix(carrierSel.value, t);
-                self._updateTransportSections(t);
-                self._checkServerSelection('transport', t);
+            class: 'cbi-input-select',
+            change: function (ev) {
+                self._saveField('transport', ev.target.value);
+                self._updateTransportVisibility(ev.target.value);
+                self._updateMatrix(providerSel.value, ev.target.value);
             }
         }, [
-            E('option', { value: 'datachannel',  selected: cfg.transport === 'datachannel'  ? '' : null, disabled: allowed.indexOf('datachannel')  === -1 ? '' : null }, 'datachannel — максимальная скорость (Telemost и Jazz — запрещён)'),
-            E('option', { value: 'vp8channel',   selected: cfg.transport === 'vp8channel'   ? '' : null }, 'vp8channel — работает везде (рекомендуется)'),
-            E('option', { value: 'seichannel',   selected: cfg.transport === 'seichannel'   ? '' : null, disabled: allowed.indexOf('seichannel')   === -1 ? '' : null }, 'seichannel — не для Telemost'),
-            E('option', { value: 'videochannel', selected: cfg.transport === 'videochannel' ? '' : null }, 'videochannel — крайний случай, везде')
+            E('option', { value: 'datachannel', selected: cfg.transport === 'datachannel' ? '' : null }, 'datachannel'),
+            E('option', { value: 'vp8channel', selected: cfg.transport === 'vp8channel' ? '' : null }, 'vp8channel'),
+            E('option', { value: 'seichannel', selected: cfg.transport === 'seichannel' ? '' : null }, 'seichannel'),
+            E('option', { value: 'videochannel', selected: cfg.transport === 'videochannel' ? '' : null }, 'videochannel')
         ]);
         self._transportSel = transportSel;
 
-        /* ── Поля подключения ───────────────────────────────── */
-        var roomH = makeDebounced('room_id',   function (v) { self._checkServerSelection('room_id',   v); });
-        var roomInput = E('input', { class: 'cbi-input-text', type: 'text', value: cfg.room_id, placeholder: 'Например: 49286587700808', change: roomH.change, input: roomH.input });
+        var roomInput = textInput('room_id', cfg.room_id, 'Room ID или https://host/room для Jitsi');
+        var keyInput = textInput('key', cfg.key, '64 hex chars');
         self._roomInput = roomInput;
-
-        var clientH = makeDebounced('client_id', function (v) { self._checkServerSelection('client_id', v); });
-        var clientInput = E('input', { class: 'cbi-input-text', type: 'text', value: cfg.client_id, placeholder: 'Например: home-router', change: clientH.change, input: clientH.input });
-        self._clientInput = clientInput;
-
-        var keyH = makeDebounced('key', function (v) { self._checkServerSelection('key', v); });
-        var keyInput = E('input', { class: 'cbi-input-text', type: 'password', value: cfg.key, placeholder: 'e5265a924657a8807dc...', change: keyH.change, input: keyH.input });
         self._keyInput = keyInput;
 
-        /* ── SOCKS5 ─────────────────────────────────────────── */
-        var socksHostH = makeDebounced('socks_host');
-        var socksHostInput  = E('input', { class: 'cbi-input-text', type: 'text',     value: cfg.socks_host, placeholder: '0.0.0.0', change: socksHostH.change, input: socksHostH.input });
-        var socksPortInput  = E('input', { class: 'cbi-input-text', type: 'number',   value: cfg.socks_port, placeholder: '1080', min: '1', max: '65535', change: function (ev) { var v = parseInt(ev.target.value, 10); if (v >= 1 && v <= 65535) self._saveField('socks_port', String(v)); } });
-        var socksUserH      = makeDebounced('socks_user');
-        var socksUserInput  = E('input', { class: 'cbi-input-text', type: 'text',     value: cfg.socks_user, placeholder: '(без аутентификации — оставьте пустым)', change: socksUserH.change, input: socksUserH.input });
-        var socksPassH      = makeDebounced('socks_pass');
-        var socksPassInput  = E('input', { class: 'cbi-input-text', type: 'password', value: cfg.socks_pass, placeholder: '(без аутентификации — оставьте пустым)', change: socksPassH.change, input: socksPassH.input });
+        var matrixTable = E('table', {
+            class: 'table',
+            style: 'width:100%;border-collapse:collapse;'
+        }, [
+            E('tr', {}, [
+                E('th', { style: 'text-align:left;padding:8px;border-bottom:1px solid #d0d7de;' }, 'Transport'),
+                E('th', { style: 'text-align:center;padding:8px;border-bottom:1px solid #d0d7de;' }, 'Telemost'),
+                E('th', { style: 'text-align:center;padding:8px;border-bottom:1px solid #d0d7de;' }, 'WBStream'),
+                E('th', { style: 'text-align:center;padding:8px;border-bottom:1px solid #d0d7de;' }, 'Jitsi')
+            ])
+        ]);
 
-        /* ── DNS / Debug ─────────────────────────────────────── */
-        var dnsH = makeDebounced('dns');
-        var dnsInput = E('input', { class: 'cbi-input-text', type: 'text', value: cfg.dns, placeholder: '1.1.1.1:53', change: dnsH.change, input: dnsH.input });
+        [ 'datachannel', 'vp8channel', 'seichannel', 'videochannel' ].forEach(function (transport) {
+            var tr = E('tr', {}, [
+                E('td', { style: 'padding:8px;border-bottom:1px solid #d8dee4;font-weight:600;' }, transport)
+            ]);
 
-        var debugCheck = E('input', {
-            type: 'checkbox', checked: cfg.debug === '1' ? '' : null,
-            style: 'width:auto;margin-right:6px;',
-            change: function (ev) { self._saveField('debug', ev.target.checked ? '1' : '0'); }
+            [ 'telemost', 'wbstream', 'jitsi' ].forEach(function (provider) {
+                var kind = compatibilityKind(provider, transport);
+                var meta = statusMeta(kind);
+                var td = E('td', {
+                    style: 'padding:8px;border-bottom:1px solid #d8dee4;text-align:center;color:' + meta.color + ';'
+                }, meta.icon);
+                self._matrixCells[provider + ':' + transport] = td;
+                tr.appendChild(td);
+            });
+
+            matrixTable.appendChild(tr);
         });
 
-        /* ── Параметры транспортов ───────────────────────────── */
-        var vp8FpsInput   = numInput('vp8_fps',   cfg.vp8_fps,   '25', 1, 120);
-        var vp8BatchInput = numInput('vp8_batch', cfg.vp8_batch, '1',  1, null);
+        var comboNote = E('div', { style: 'margin-top:10px;padding:10px 12px;border-radius:8px;background:#f6f8fa;border:1px solid #d0d7de;' }, '');
+        self._comboNote = comboNote;
+
+        var baseCard = card('Базовые настройки', [
+            row('Provider', 'Новая модель использует auth.provider вместо старого carrier.', providerSel),
+            row('Transport', 'Задаёт net.transport в runtime YAML.', transportSel),
+            row('Room ID', 'Для Jitsi сюда вставляется полный room URL или host/room.', roomInput),
+            row('Ключ', '64-символьный hex-ключ шифрования.', keyInput),
+            comboNote
+        ]);
+
+        var socksHostInput = textInput('socks_host', cfg.socks_host, '127.0.0.1');
+        var socksPortInput = numInput('socks_port', cfg.socks_port, '1080', 1, 65535);
+        var socksUserInput = textInput('socks_user', cfg.socks_user, '');
+        var socksPassInput = textInput('socks_pass', cfg.socks_pass, '');
+
+        var socksCard = card('SOCKS5', [
+            row('Host', 'Если это не loopback, init-скрипт потребует логин и пароль.', socksHostInput),
+            row('Port', 'Локальный SOCKS5 порт.', socksPortInput),
+            row('User', 'Входящая SOCKS5 аутентификация.', socksUserInput),
+            row('Pass', 'Пароль для SOCKS5.', socksPassInput)
+        ]);
+
+        var dnsInput = textInput('dns', cfg.dns, '1.1.1.1:53');
+        var dataDirInput = textInput('data_dir', cfg.data_dir, '/var/lib/olcrtc');
+        var ffmpegInput = textInput('ffmpeg', cfg.ffmpeg, 'ffmpeg');
+        var debugCheck = E('input', {
+            type: 'checkbox',
+            checked: cfg.debug === '1' ? 'checked' : null,
+            change: function (ev) {
+                self._saveField('debug', ev.target.checked ? '1' : '0');
+            }
+        });
+
+        var advancedCard = card('Runtime', [
+            row('DNS', 'Записывается в net.dns.', dnsInput),
+            row('Data dir', 'Путь для top-level data: в YAML.', dataDirInput),
+            row('ffmpeg', 'Top-level ffmpeg path для videochannel.', ffmpegInput),
+            row('Debug', 'Включает подробные логи.', E('label', { style: 'display:flex;gap:8px;align-items:center;' }, [ debugCheck, E('span', {}, 'debug: true') ]))
+        ]);
+
+        var vp8FpsInput = numInput('vp8_fps', cfg.vp8_fps, '60', 1, 120);
+        var vp8BatchInput = numInput('vp8_batch', cfg.vp8_batch, '64', 1, 512);
+        var seiFpsInput = numInput('sei_fps', cfg.sei_fps, '60', 1, 120);
+        var seiBatchInput = numInput('sei_batch', cfg.sei_batch, '64', 1, 512);
+        var seiFragInput = numInput('sei_frag', cfg.sei_frag, '900', 1, 65535);
+        var seiAckInput = numInput('sei_ack_ms', cfg.sei_ack_ms, '2000', 1, 60000);
+        var videoCodecSel = E('select', {
+            class: 'cbi-input-select',
+            change: function (ev) { self._saveField('video_codec', ev.target.value); }
+        }, [
+            E('option', { value: 'qrcode', selected: cfg.video_codec === 'qrcode' ? '' : null }, 'qrcode'),
+            E('option', { value: 'tile', selected: cfg.video_codec === 'tile' ? '' : null }, 'tile')
+        ]);
+        var videoWInput = numInput('video_w', cfg.video_w, '1920', 1, 8192);
+        var videoHInput = numInput('video_h', cfg.video_h, '1080', 1, 8192);
+        var videoFpsInput = numInput('video_fps', cfg.video_fps, '30', 1, 120);
+        var videoBitrateInput = textInput('video_bitrate', cfg.video_bitrate, '2M');
+        var videoHwSel = E('select', {
+            class: 'cbi-input-select',
+            change: function (ev) { self._saveField('video_hw', ev.target.value); }
+        }, [
+            E('option', { value: 'none', selected: cfg.video_hw === 'none' ? '' : null }, 'none'),
+            E('option', { value: 'nvenc', selected: cfg.video_hw === 'nvenc' ? '' : null }, 'nvenc')
+        ]);
+        var qrRecoverySel = E('select', {
+            class: 'cbi-input-select',
+            change: function (ev) { self._saveField('video_qr_recovery', ev.target.value); }
+        }, [
+            E('option', { value: 'low', selected: cfg.video_qr_recovery === 'low' ? '' : null }, 'low'),
+            E('option', { value: 'medium', selected: cfg.video_qr_recovery === 'medium' ? '' : null }, 'medium'),
+            E('option', { value: 'high', selected: cfg.video_qr_recovery === 'high' ? '' : null }, 'high'),
+            E('option', { value: 'highest', selected: cfg.video_qr_recovery === 'highest' ? '' : null }, 'highest')
+        ]);
+        var qrSizeInput = numInput('video_qr_size', cfg.video_qr_size, '0', 0, 65535);
+        var tileModuleInput = numInput('video_tile_module', cfg.video_tile_module, '4', 1, 270);
+        var tileRsInput = numInput('video_tile_rs', cfg.video_tile_rs, '20', 0, 200);
+
+        self._transportParamInputs = {
+            vp8_fps: vp8FpsInput,
+            vp8_batch: vp8BatchInput,
+            sei_fps: seiFpsInput,
+            sei_batch: seiBatchInput,
+            sei_frag: seiFragInput,
+            sei_ack_ms: seiAckInput,
+            video_codec: videoCodecSel,
+            video_w: videoWInput,
+            video_h: videoHInput,
+            video_fps: videoFpsInput,
+            video_bitrate: videoBitrateInput,
+            video_hw: videoHwSel,
+            video_qr_recovery: qrRecoverySel,
+            video_qr_size: qrSizeInput,
+            video_tile_module: tileModuleInput,
+            video_tile_rs: tileRsInput
+        };
+
+        var dataHint = E('div', { style: 'color:#57606a;' }, 'datachannel не требует дополнительных параметров.');
+        self._dataHint = dataHint;
+
         var vp8Section = E('div', {}, [
-            E('div', { style: 'margin-bottom:8px;padding:4px 0;font-size:0.8em;color:#9a7fc0;text-transform:uppercase;letter-spacing:0.05em;border-bottom:1px solid rgba(138,92,246,0.15);' }, 'VP8 Channel — рекомендуется -vp8-fps 60 -vp8-batch 64'),
-            rowV('-vp8-fps',   'FPS VP8-потока. Рекомендуется: 60. По умолчанию: 25.',  vp8FpsInput),
-            rowV('-vp8-batch', 'Кадров за тик. Рекомендуется: 64. По умолчанию: 1.',    vp8BatchInput)
+            row('VP8 FPS', 'vp8.fps', vp8FpsInput),
+            row('VP8 batch', 'vp8.batch_size', vp8BatchInput)
         ]);
         self._vp8Section = vp8Section;
 
-        var seiFpsInput   = numInput('sei_fps',   cfg.sei_fps,   '60',   1, 120);
-        var seiBatchInput = numInput('sei_batch', cfg.sei_batch, '64',   1, null);
-        var seiFragInput  = numInput('sei_frag',  cfg.sei_frag,  '900',  1, null);
-        var seiAckInput   = numInput('sei_ack_ms', cfg.sei_ack_ms, '2000', 1, null);
         var seiSection = E('div', {}, [
-            E('div', { style: 'margin-bottom:8px;padding:4px 0;font-size:0.8em;color:#9a7fc0;text-transform:uppercase;letter-spacing:0.05em;border-bottom:1px solid rgba(138,92,246,0.15);' }, 'SEI Channel — рекомендуется -fps 60 -batch 64 -frag 900 -ack-ms 2000'),
-            rowV('-fps',    'FPS H264-потока. Рекомендуется: 60.',           seiFpsInput),
-            rowV('-batch',  'Кадров за тик. Рекомендуется: 64.',             seiBatchInput),
-            rowV('-frag',   'Размер фрагмента в байтах. Рекомендуется: 900.',seiFragInput),
-            rowV('-ack-ms', 'Таймаут ACK в мс. Рекомендуется: 2000.',        seiAckInput)
+            row('SEI FPS', 'sei.fps', seiFpsInput),
+            row('SEI batch', 'sei.batch_size', seiBatchInput),
+            row('SEI fragment size', 'sei.fragment_size', seiFragInput),
+            row('SEI ack timeout', 'sei.ack_timeout_ms', seiAckInput)
         ]);
         self._seiSection = seiSection;
 
-        var videoCodecSel = E('select', { class: 'cbi-input-select', change: function (ev) { self._saveField('video_codec', ev.target.value); self._updateVideoCodecRows(ev.target.value); } }, [
-            E('option', { value: 'qrcode', selected: cfg.video_codec === 'qrcode' ? '' : null }, 'qrcode (рекомендуется)'),
-            E('option', { value: 'tile',   selected: cfg.video_codec === 'tile'   ? '' : null }, 'tile (требует 1080×1080)')
-        ]);
-        var videoWInput       = numInput('video_w',   cfg.video_w,   '1920', 1, null);
-        var videoHInput       = numInput('video_h',   cfg.video_h,   '1080', 1, null);
-        var videoFpsInput     = numInput('video_fps', cfg.video_fps, '30',   1, 120);
-        var bitrateH          = makeDebounced('video_bitrate');
-        var videoBitrateInput = E('input', { class: 'cbi-input-text', type: 'text', value: cfg.video_bitrate, placeholder: '2M', change: bitrateH.change, input: bitrateH.input });
-        var videoHwSel        = E('select', { class: 'cbi-input-select', change: function (ev) { self._saveField('video_hw', ev.target.value); } }, [
-            E('option', { value: 'none',  selected: cfg.video_hw === 'none'  ? '' : null }, 'none'),
-            E('option', { value: 'nvenc', selected: cfg.video_hw === 'nvenc' ? '' : null }, 'nvenc (NVIDIA GPU)')
-        ]);
-        var qrRecoverySel = E('select', { class: 'cbi-input-select', change: function (ev) { self._saveField('video_qr_recovery', ev.target.value); } }, [
-            E('option', { value: 'low',     selected: cfg.video_qr_recovery === 'low'     ? '' : null }, 'low'),
-            E('option', { value: 'medium',  selected: cfg.video_qr_recovery === 'medium'  ? '' : null }, 'medium'),
-            E('option', { value: 'high',    selected: cfg.video_qr_recovery === 'high'    ? '' : null }, 'high'),
-            E('option', { value: 'highest', selected: cfg.video_qr_recovery === 'highest' ? '' : null }, 'highest')
-        ]);
-        var qrSizeInput     = numInput('video_qr_size',     cfg.video_qr_size,    '0',  0, null);
-        var tileModuleInput = numInput('video_tile_module', cfg.video_tile_module, '4',  1, 270);
-        var tileRsInput     = numInput('video_tile_rs',     cfg.video_tile_rs,    '20', 0, 200);
-        var ffmpegH         = makeDebounced('ffmpeg');
-        var ffmpegInput     = E('input', { class: 'cbi-input-text', type: 'text', value: cfg.ffmpeg, placeholder: 'ffmpeg', change: ffmpegH.change, input: ffmpegH.input });
-
-        var qrRecoveryRow = rowV('-video-qr-recovery', 'Коррекция ошибок QR. (только qrcode)', qrRecoverySel);
-        var qrSizeRow     = rowV('-video-qr-size',     'Размер фрагмента QR, 0=авто. (только qrcode)', qrSizeInput);
-        var tileModuleRow = rowV('-video-tile-module', 'Размер тайла 1..270 пикс. Требует 1080×1080. (только tile)', tileModuleInput);
-        var tileRsRow     = rowV('-video-tile-rs',     'Reed-Solomon паритет % 0..200. (только tile)', tileRsInput);
-        self._qrRows   = [qrRecoveryRow, qrSizeRow];
-        self._tileRows = [tileModuleRow, tileRsRow];
-
         var videoSection = E('div', {}, [
-            E('div', { style: 'margin-bottom:8px;padding:4px 0;font-size:0.8em;color:#9a7fc0;text-transform:uppercase;letter-spacing:0.05em;border-bottom:1px solid rgba(138,92,246,0.15);' }, 'Video Channel — рекомендуется qrcode 1080×1080 60fps 5000k'),
-            rowV('-video-codec',   'Кодек передачи. qrcode — рекомендуется. tile — строго 1080×1080.',   videoCodecSel),
-            rowV('-video-w',       'Ширина кадра в пикс. Для tile — строго 1080.',                       videoWInput),
-            rowV('-video-h',       'Высота кадра в пикс. Для tile — строго 1080.',                       videoHInput),
-            rowV('-video-fps',     'FPS. Рекомендуется: 60. По умолчанию: 30.',                           videoFpsInput),
-            rowV('-video-bitrate', 'Битрейт: 2M или 5000k. Рекомендуется: 5000k.',                       videoBitrateInput),
-            rowV('-video-hw',      'Аппаратное ускорение. По умолчанию: none.',                           videoHwSel),
-            qrRecoveryRow, qrSizeRow, tileModuleRow, tileRsRow,
-            rowV('-ffmpeg', 'Путь к ffmpeg. По умолчанию: ffmpeg (из PATH).', ffmpegInput)
+            row('Video codec', 'video.codec', videoCodecSel),
+            row('Video width', 'video.width', videoWInput),
+            row('Video height', 'video.height', videoHInput),
+            row('Video FPS', 'video.fps', videoFpsInput),
+            row('Video bitrate', 'video.bitrate', videoBitrateInput),
+            row('Video HW', 'video.hw', videoHwSel),
+            row('QR recovery', 'video.qr_recovery', qrRecoverySel),
+            row('QR size', 'video.qr_size', qrSizeInput),
+            row('Tile module', 'video.tile_module', tileModuleInput),
+            row('Tile RS', 'video.tile_rs', tileRsInput)
         ]);
         self._videoSection = videoSection;
 
-        self._transportParamInputs = {
-            vp8_fps: vp8FpsInput, vp8_batch: vp8BatchInput,
-            sei_fps: seiFpsInput, sei_batch: seiBatchInput, sei_frag: seiFragInput, sei_ack_ms: seiAckInput,
-            video_codec: videoCodecSel, video_w: videoWInput, video_h: videoHInput,
-            video_fps: videoFpsInput, video_bitrate: videoBitrateInput, video_hw: videoHwSel,
-            video_qr_recovery: qrRecoverySel, video_qr_size: qrSizeInput,
-            video_tile_module: tileModuleInput, video_tile_rs: tileRsInput, ffmpeg: ffmpegInput
-        };
-
-        var datachannelHint = E('div', { style: 'color:#8b949e;font-size:0.9em;padding:8px 0;' }, 'datachannel не имеет дополнительных параметров — всё по умолчанию.');
-        self._datachannelHint = datachannelHint;
-
-        self._updateTransportSections(cfg.transport);
-        self._updateVideoCodecRows(cfg.video_codec);
-
-        /* ── URI / Подписки ─────────────────────────────────── */
-        var uriLabel = E('span', { style: 'margin-left:10px;font-size:0.85em;vertical-align:middle;' }, '');
-        self._uriLabel = uriLabel;
-
-        var uriInput = E('input', {
-            class       : 'cbi-input-text',
-            type        : 'text',
-            placeholder : 'olcrtc://… или https://example.com/sub.txt',
-            style       : 'font-family:monospace;font-size:0.82em;width:100%;',
-            input       : function (ev) {
-                var val = ev.target.value.trim();
-
-                if (!val) {
-                    uriLabel.textContent    = '';
-                    ev.target.style.outline = '';
-                    return;
-                }
-
-                /* Ссылка на подписку */
-                if (val.indexOf('http://') === 0 || val.indexOf('https://') === 0) {
-                    self._addSubscription(val);
-                    return;
-                }
-
-                /* Прямой URI olcrtc:// */
-                var p = parseOlcrtcUri(val);
-                if (!p) {
-                    uriLabel.textContent    = '✗ Неверный формат';
-                    uriLabel.style.color    = '#f85149';
-                    ev.target.style.outline = '2px solid #f85149';
-                    return;
-                }
-
-                carrierSel.value    = p.carrier;
-                transportSel.value  = p.transport;
-                roomInput.value     = p.room_id;
-                clientInput.value   = p.client_id;
-                keyInput.value      = p.key;
-                self._updateTransportOptions(p.carrier);
-                updateMatrix(p.carrier, p.transport);
-
-                var uciVals = { carrier: p.carrier, transport: p.transport, room_id: p.room_id, client_id: p.client_id, key: p.key };
-                var tp = p.transportParams || {};
-                Object.keys(tp).forEach(function (k) {
-                    uciVals[k] = tp[k];
-                    if (self._transportParamInputs && self._transportParamInputs[k])
-                        self._transportParamInputs[k].value = tp[k];
-                });
-                callUciSet('olcrtc', 'config', uciVals)
-                    .then(function () { return callUciCommit('olcrtc'); })
-                    .catch(function (e) { console.error('[OlcRTC] URI import error:', e); });
-
-                uriLabel.textContent    = '✓ Параметры применены';
-                uriLabel.style.color    = '#3fb950';
-                ev.target.style.outline = '2px solid #3fb950';
-            }
-        });
-        self._uriInput = uriInput;
-
-        /* Контейнер для всех блоков подписок */
-        var subsContainer = E('div', {});
-        self._subsContainer = subsContainer;
-
-        var uriSection = card('Подключение по URI / Подписка', [
-            E('div', { style: 'margin-bottom:4px;' }, [uriInput, uriLabel]),
-            E('div', { style: 'font-size:0.82em;color:#7a5f99;margin-bottom:12px;' },
-                'Вставьте olcrtc://… — параметры заполнятся автоматически. ' +
-                'Или https:// ссылку на подписку в формате sub.md — добавится новый блок.'),
-            subsContainer
-        ]);
-
-        /* ── Карточки ─────────────────────────────────────────── */
-        var matrixCard = card('Совместимость', [
-            E('div', { style: 'overflow-x:auto;' }, [matrixTable])
-        ]);
-
-        var settingsCard = card('Базовые настройки подключения', [
-            row('Сервис',    'Через какой сервис идёт туннель.', carrierSel),
-            row('Транспорт', 'Протокол передачи данных внутри туннеля.', transportSel),
-            E('hr', { style: HR_STYLE }),
-            row('Room ID',         'ID комнаты с сервера.', roomInput),
-            row('Client ID',       'Идентификатор, должен совпадать с сервером.', clientInput),
-            row('Ключ шифрования', 'HEX-строка 64 символа. openssl rand -hex 32.', keyInput)
-        ]);
-
-        var socksCard = card('SOCKS5 прокси', [
-            rowV('Адрес (-socks-host)',  '0.0.0.0 — все интерфейсы. 127.0.0.1 — только локально.', socksHostInput),
-            rowV('Порт (-socks-port)',   'Локальный порт прокси. По умолчанию: 1080.',              socksPortInput),
-            rowV('Логин (-socks-user)',  'RFC 1929. Пусто = без аутентификации.',                   socksUserInput),
-            rowV('Пароль (-socks-pass)', 'Используется вместе с логином.',                          socksPassInput)
-        ]);
-
-        var advancedCard = card('Дополнительно', [
-            rowV('DNS-сервер (-dns)',       'DNS для резолвинга в туннеле. По умолчанию: 1.1.1.1:53.', dnsInput),
-            rowV('Режим отладки (--debug)', 'Подробные логи WebRTC-соединений.',
-                E('label', { style: 'display:flex;align-items:center;cursor:pointer;' }, [debugCheck, E('span', {}, 'Включить подробное логирование')]))
-        ]);
-
         var transportCard = card('Параметры транспорта', [
-            datachannelHint, vp8Section, seiSection, videoSection
+            dataHint,
+            vp8Section,
+            seiSection,
+            videoSection
         ]);
 
         var logsEl = E('pre', {
-            style: 'background:#0a0518;color:#c4a0ff;padding:12px;max-height:360px;overflow-y:auto;' +
-                   'border-radius:6px;font-size:0.78em;white-space:pre-wrap;word-break:break-all;' +
-                   'margin:0;border:1px solid rgba(138,92,246,0.2);'
+            style: 'background:#0d1117;color:#c9d1d9;padding:12px;max-height:360px;overflow:auto;border-radius:10px;margin:0;'
         }, 'Загрузка логов...');
         self._logsEl = logsEl;
+        var logsCard = card('Логи', [ logsEl ]);
 
-        var logsCard = card('Логи', [logsEl]);
-
+        self._updateTransportVisibility(cfg.transport);
+        self._updateMatrix(cfg.auth_provider, cfg.transport);
         self._startPolling();
 
-        /* Загрузить сохранённые подписки */
-        var savedSubs = uci.sections('olcrtc', 'subscription') || [];
-        savedSubs.forEach(function (section) {
-            var sectionName = section['.name'];
-            var url = section.url || '';
-            if (url) self._createSubBlock(sectionName, url);
+        (uci.sections('olcrtc', 'subscription') || []).forEach(function (section) {
+            if (section.url) self._createSubscription(section['.name'], section.url);
         });
 
-        function flexRow(children, extra) {
-            return E('div', { style: 'display:flex;gap:16px;margin-bottom:16px;align-items:stretch;' + (extra || '') }, children);
-        }
-        function col(flex, cardEl) {
-            return E('div', { style: 'flex:' + flex + ';min-width:0;' }, [cardEl]);
+        function flex(children) {
+            return E('div', { style: 'display:flex;gap:16px;align-items:stretch;flex-wrap:wrap;margin-bottom:16px;' }, children);
         }
 
-        return E('div', {
-            style: 'background:linear-gradient(160deg,#06011a 0%,#04091a 100%);' +
-                   'border-radius:16px;padding:24px 28px;width:100%;box-sizing:border-box;'
-        }, [
-            /* Заголовок */
-            E('div', { style: 'text-align:center;margin-bottom:24px;' }, [
-                E('div', { style: 'font-size:1.45em;font-weight:700;color:#e2d9f3;letter-spacing:0.02em;margin-bottom:6px;' }, 'OpenWRT OlcRTC Panel'),
-                E('div', { style: 'width:60px;height:2px;background:linear-gradient(90deg,#8a5cf6,#c084fc);margin:0 auto;border-radius:1px;' })
+        function col(width, node) {
+            return E('div', { style: 'flex:' + width + ';min-width:280px;' }, [ node ]);
+        }
+
+        return E('div', { style: 'padding:16px;' }, [
+            E('div', { style: 'margin-bottom:18px;' }, [
+                E('h2', { style: 'margin:0 0 6px 0;' }, 'OlcRTC OpenWrt'),
+                E('div', { style: 'color:#57606a;' }, 'LuCI-панель для ветки universal-carrier: provider + transport + YAML runtime')
             ]),
-
-            /* Строка 1: Статус + URI/Подписки */
-            flexRow([
-                col(1, statusSection),
-                col(2, uriSection)
+            flex([
+                col(1, statusCard),
+                col(2, uriCard)
             ]),
-
-            /* Строка 2: Совместимость + Базовые настройки */
-            flexRow([
-                col(2, matrixCard),
-                col(3, settingsCard)
+            flex([
+                col(1, card('Совместимость', [ matrixTable ])),
+                col(1, baseCard)
             ]),
-
-            /* Строка 3: SOCKS5 + Транспорт + Дополнительно */
-            flexRow([
-                col(2, socksCard),
-                col(3, transportCard),
-                col(2, advancedCard)
+            flex([
+                col(1, socksCard),
+                col(1, transportCard),
+                col(1, advancedCard)
             ]),
-
-            /* Строка 4: Логи на всю ширину */
-            logsCard,
-
-            /* Подвал */
-            E('div', { style: 'text-align:center;margin-top:20px;padding-top:16px;' +
-                              'border-top:1px solid rgba(138,92,246,0.15);font-size:0.78em;color:#6b5280;' }, [
-                'Страница проекта — ',
-                E('a', {
-                    href   : 'https://github.com/tankionline2005/OlcRTC-OpenWRT',
-                    target : '_blank',
-                    style  : 'color:#8a5cf6;text-decoration:none;'
-                }, 'https://github.com/tankionline2005/OlcRTC-OpenWRT')
-            ])
+            logsCard
         ]);
     },
 
-    handleSave      : function () { return Promise.resolve(); },
-    handleSaveApply : function () { return Promise.resolve(); },
-    handleReset     : function () { return Promise.resolve(); }
+    handleSave: function () { return Promise.resolve(); },
+    handleSaveApply: function () { return Promise.resolve(); },
+    handleReset: function () { return Promise.resolve(); }
 });

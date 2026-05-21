@@ -1,10 +1,4 @@
 #!/bin/sh
-# =============================================================================
-# Установочный скрипт OlcRTC-OpenWRT
-# Проект: https://github.com/tankionline2005/OlcRTC-OpenWRT
-# Основан на OlcRTC: https://github.com/openlibrecommunity/olcrtc
-#   автора zarazaex / openlibrecommunity
-# =============================================================================
 
 set -e
 
@@ -12,6 +6,7 @@ REPO_RAW="https://raw.githubusercontent.com/tankionline2005/OlcRTC-OpenWRT/main"
 BINARY_ARM64_URL="${REPO_RAW}/olcrtc-linux-arm64"
 BINARY_AMD64_URL="${REPO_RAW}/olcrtc-linux-amd64"
 BINARY_DST="/usr/bin/olcrtc"
+CONFIG_DIR="/etc/olcrtc"
 INITD="/etc/init.d/olcrtc"
 UCI_CONF="/etc/config/olcrtc"
 LUCI_MENU="/usr/share/luci/menu.d/luci-app-olcrtc.json"
@@ -24,96 +19,114 @@ RED='\033[0;31m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-info()  { echo -e "${GREEN}[ОК]${NC} $*"; }
+info()  { echo -e "${GREEN}[OK]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[!!]${NC} $*"; }
-error() { echo -e "${RED}[ОШ]${NC} $*"; exit 1; }
+error() { echo -e "${RED}[ER]${NC} $*"; exit 1; }
+
+detect_arch() {
+    local machine
+    machine="$(uname -m 2>/dev/null || true)"
+    case "$machine" in
+        aarch64|arm64)
+            ARCH_NAME="ARM64"
+            BINARY_URL="$BINARY_ARM64_URL"
+            ;;
+        x86_64|amd64)
+            ARCH_NAME="AMD64"
+            BINARY_URL="$BINARY_AMD64_URL"
+            ;;
+        *)
+            ARCH_NAME=""
+            BINARY_URL=""
+            ;;
+    esac
+}
+
+ask_arch() {
+    echo "Select architecture:"
+    echo "  1) arm64  - routers on aarch64/OpenWrt"
+    echo "  2) amd64  - x86-64 OpenWrt"
+    printf "Your choice [1/2]: "
+    read ARCH_CHOICE
+    case "$ARCH_CHOICE" in
+        2)
+            ARCH_NAME="AMD64"
+            BINARY_URL="$BINARY_AMD64_URL"
+            ;;
+        *)
+            ARCH_NAME="ARM64"
+            BINARY_URL="$BINARY_ARM64_URL"
+            ;;
+    esac
+}
 
 echo ""
-echo "╔══════════════════════════════════════╗"
-echo "║      Установка OlcRTC-OpenWRT        ║"
-echo "╚══════════════════════════════════════╝"
+echo "======================================="
+echo "      Installing OlcRTC-OpenWRT       "
+echo "======================================="
 echo ""
 
-# ── Проверки ──────────────────────────────────────────────
-command -v wget  >/dev/null 2>&1 || error "wget не найден"
-command -v uci   >/dev/null 2>&1 || error "uci не найден (это не OpenWRT?)"
+command -v wget >/dev/null 2>&1 || error "wget not found"
+command -v uci  >/dev/null 2>&1 || error "uci not found (is this OpenWrt?)"
 
-# ── Выбор архитектуры ─────────────────────────────────────
-echo "Выберите архитектуру:"
-echo "  1) arm64  — роутеры (Cudy, GL.iNet, OpenWRT на ARM)"
-echo "  2) amd64  — ПК или сервер под OpenWRT (x86-64)"
-printf "Ваш выбор [1/2]: "
-read ARCH_CHOICE
-case "$ARCH_CHOICE" in
-    2) BINARY_URL="$BINARY_AMD64_URL"; ARCH_NAME="AMD64" ;;
-    *) BINARY_URL="$BINARY_ARM64_URL"; ARCH_NAME="ARM64" ;;
-esac
-
-# ── Скачиваем бинарник ────────────────────────────────────
-info "Скачиваем бинарник olcrtc (${ARCH_NAME})..."
-wget -q -O "$BINARY_DST" "$BINARY_URL" || \
-    error "Не удалось скачать бинарник с $BINARY_URL"
-chmod 755 "$BINARY_DST"
-info "Бинарник установлен: $BINARY_DST (${ARCH_NAME})"
-
-# ── init.d скрипт ─────────────────────────────────────────
-info "Устанавливаем init.d скрипт..."
-wget -q -O "$INITD" "${REPO_RAW}/files/etc/init.d/olcrtc" || \
-    error "Не удалось скачать init.d скрипт"
-chmod 755 "$INITD"
-"$INITD" enable
-info "init.d скрипт установлен и включён в автозагрузку"
-
-# ── UCI конфиг ────────────────────────────────────────────
-if [ ! -f "$UCI_CONF" ]; then
-    info "Создаём конфигурацию UCI..."
-    wget -q -O "$UCI_CONF" "${REPO_RAW}/files/etc/config/olcrtc" || \
-        error "Не удалось создать UCI конфиг"
-    info "Конфиг создан: $UCI_CONF"
+detect_arch
+if [ -z "$ARCH_NAME" ]; then
+    warn "Could not auto-detect architecture from uname -m."
+    ask_arch
 else
-    warn "UCI конфиг уже существует, пропускаем ($UCI_CONF)"
+    info "Detected architecture: $ARCH_NAME"
 fi
 
-# ── HWID — идентификатор установки ───────────────────────
+info "Downloading universal-carrier binary (${ARCH_NAME})..."
+wget -q -O "$BINARY_DST" "$BINARY_URL" || error "Failed to download binary from $BINARY_URL"
+chmod 755 "$BINARY_DST"
+
+info "Installing init script..."
+wget -q -O "$INITD" "${REPO_RAW}/files/etc/init.d/olcrtc" || error "Failed to download init script"
+chmod 755 "$INITD"
+"$INITD" enable
+
+if [ ! -f "$UCI_CONF" ]; then
+    info "Creating UCI config..."
+    wget -q -O "$UCI_CONF" "${REPO_RAW}/files/etc/config/olcrtc" || error "Failed to create UCI config"
+else
+    warn "UCI config already exists, keeping it: $UCI_CONF"
+fi
+
+mkdir -p "$CONFIG_DIR"
+
 HWID_CUR="$(uci get olcrtc.config.hwid 2>/dev/null || true)"
 if [ -z "$HWID_CUR" ]; then
     HWID="install-$(cat /proc/sys/kernel/random/uuid | tr -d '-')"
     uci set olcrtc.config.hwid="$HWID"
     uci commit olcrtc
-    info "Идентификатор установки: $HWID"
+    info "Generated install HWID: $HWID"
 else
-    info "Идентификатор установки: $HWID_CUR (сохранён)"
+    info "Using existing install HWID: $HWID_CUR"
 fi
 
-# ── LuCI: меню ────────────────────────────────────────────
-info "Устанавливаем LuCI-меню..."
-mkdir -p "$(dirname $LUCI_MENU)"
-wget -q -O "$LUCI_MENU" "${REPO_RAW}/files/usr/share/luci/menu.d/luci-app-olcrtc.json" || \
-    error "Не удалось скачать файл меню"
+info "Installing LuCI menu..."
+mkdir -p "$(dirname "$LUCI_MENU")"
+wget -q -O "$LUCI_MENU" "${REPO_RAW}/files/usr/share/luci/menu.d/luci-app-olcrtc.json" || error "Failed to download menu file"
 
-# ── LuCI: права доступа rpcd ──────────────────────────────
-info "Устанавливаем ACL для rpcd..."
-mkdir -p "$(dirname $LUCI_ACL)"
-wget -q -O "$LUCI_ACL" "${REPO_RAW}/files/usr/share/rpcd/acl.d/luci-app-olcrtc.json" || \
-    error "Не удалось скачать ACL"
+info "Installing rpcd ACL..."
+mkdir -p "$(dirname "$LUCI_ACL")"
+wget -q -O "$LUCI_ACL" "${REPO_RAW}/files/usr/share/rpcd/acl.d/luci-app-olcrtc.json" || error "Failed to download ACL file"
 
-# ── LuCI: JS-вид ──────────────────────────────────────────
-info "Устанавливаем интерфейс LuCI..."
+info "Installing LuCI frontend..."
 mkdir -p "$LUCI_VIEW_DIR"
-wget -q -O "$LUCI_VIEW" "${REPO_RAW}/files/www/luci-static/resources/view/olcrtc/main.js" || \
-    error "Не удалось скачать JS-вид LuCI"
+wget -q -O "$LUCI_VIEW" "${REPO_RAW}/files/www/luci-static/resources/view/olcrtc/main.js" || error "Failed to download LuCI view"
 
-# ── Перезапуск сервисов ───────────────────────────────────
-info "Перезапускаем rpcd и uhttpd..."
-/etc/init.d/rpcd    restart 2>/dev/null || warn "rpcd не перезапущен (возможно не установлен)"
-/etc/init.d/uhttpd  restart 2>/dev/null || warn "uhttpd не перезапущен (возможно не установлен)"
+info "Restarting services..."
+/etc/init.d/rpcd restart 2>/dev/null || warn "rpcd restart failed"
+/etc/init.d/uhttpd restart 2>/dev/null || warn "uhttpd restart failed"
 
 echo ""
-echo "╔══════════════════════════════════════════════════════╗"
-echo "║  Установка завершена!                                ║"
-echo "║                                                      ║"
-echo "║  Откройте LuCI: Службы → OlcRTC                      ║"
-echo "║  Заполните Room ID, Client ID и ключ —              ║"
-echo "║  затем нажмите Старт                                 ║"
-echo "╚══════════════════════════════════════════════════════╝"
+echo "======================================="
+echo " Installation completed"
+echo ""
+echo " Open LuCI -> Services -> OlcRTC"
+echo " Paste an olcrtc:// URI or configure provider/room/key manually"
+echo " Then press Start"
+echo "======================================="
 echo ""

@@ -1,135 +1,235 @@
 #!/bin/sh /etc/rc.common
-# Скрипт инициализации OlcRTC для OpenWRT
-# Часть проекта OlcRTC-OpenWRT
 
 USE_PROCD=1
 START=95
 STOP=10
 
-PIDFILE=/var/run/olcrtc.pid
+SERVICE_NAME="olcrtc"
 LOGTAG="olcrtc"
+BINARY="/usr/bin/olcrtc"
+CONFIG_DIR="/etc/olcrtc"
+CONFIG_PATH="${CONFIG_DIR}/client.yaml"
 
-start_service() {
-    local binary carrier transport room_id client_id key
-    local socks_host socks_port socks_user socks_pass dns debug
-    local vp8_fps vp8_batch
-    local sei_fps sei_batch sei_frag sei_ack_ms
-    local video_codec video_w video_h video_fps video_bitrate video_hw
-    local video_qr_recovery video_qr_size video_tile_module video_tile_rs ffmpeg_bin
-
-    binary='/usr/bin/olcrtc'
-
-    config_load olcrtc
-    config_get carrier          config carrier          'telemost'
-    config_get transport        config transport        'vp8channel'
-    config_get room_id          config room_id          ''
-    config_get client_id        config client_id        ''
-    config_get key              config key              ''
-    config_get socks_host       config socks_host       '0.0.0.0'
-    config_get socks_port       config socks_port       '1080'
-    config_get socks_user       config socks_user       ''
-    config_get socks_pass       config socks_pass       ''
-    config_get dns              config dns              '1.1.1.1:53'
-    config_get debug            config debug            '0'
-    config_get vp8_fps          config vp8_fps          '25'
-    config_get vp8_batch        config vp8_batch        '1'
-    config_get sei_fps          config sei_fps          '60'
-    config_get sei_batch        config sei_batch        '64'
-    config_get sei_frag         config sei_frag         '900'
-    config_get sei_ack_ms       config sei_ack_ms       '2000'
-    config_get video_codec      config video_codec      'qrcode'
-    config_get video_w          config video_w          '1920'
-    config_get video_h          config video_h          '1080'
-    config_get video_fps        config video_fps        '30'
-    config_get video_bitrate    config video_bitrate    '2M'
-    config_get video_hw         config video_hw         'none'
-    config_get video_qr_recovery config video_qr_recovery 'low'
-    config_get video_qr_size    config video_qr_size    '0'
-    config_get video_tile_module config video_tile_module '4'
-    config_get video_tile_rs    config video_tile_rs    '20'
-    config_get ffmpeg_bin       config ffmpeg           'ffmpeg'
-
-    if [ -z "$room_id" ] || [ -z "$key" ]; then
-        logger -t "$LOGTAG" "Ошибка: не заданы Room ID или ключ — запуск невозможен"
-        return 1
-    fi
-
-    if [ -z "$client_id" ]; then
-        logger -t "$LOGTAG" "Ошибка: не задан Client ID — запуск невозможен"
-        return 1
-    fi
-
-    if [ ! -x "$binary" ]; then
-        logger -t "$LOGTAG" "Ошибка: бинарник $binary не найден или не исполняемый"
-        return 1
-    fi
-
-    logger -t "$LOGTAG" "Запуск клиента: binary=$binary carrier=$carrier transport=$transport порт=$socks_port"
-
-    procd_open_instance
-    procd_set_param command "$binary" \
-        -mode cnc \
-        -carrier "$carrier" \
-        -transport "$transport" \
-        -id "$room_id" \
-        -client-id "$client_id" \
-        -key "$key" \
-        -link direct \
-        -data data \
-        -dns "$dns" \
-        -socks-host "$socks_host" \
-        -socks-port "$socks_port"
-
-    [ -n "$socks_user" ] && procd_append_param command -socks-user "$socks_user"
-    [ -n "$socks_pass" ] && procd_append_param command -socks-pass "$socks_pass"
-    [ "$debug" = "1" ]   && procd_append_param command --debug
-
-    case "$transport" in
-        vp8channel)
-            procd_append_param command \
-                -vp8-fps "$vp8_fps" \
-                -vp8-batch "$vp8_batch"
+is_loopback_host() {
+    case "$1" in
+        127.0.0.1|localhost|::1)
+            return 0
             ;;
-        seichannel)
-            procd_append_param command \
-                -fps "$sei_fps" \
-                -batch "$sei_batch" \
-                -frag "$sei_frag" \
-                -ack-ms "$sei_ack_ms"
+        *)
+            return 1
             ;;
-        videochannel)
-            procd_append_param command \
-                -video-codec "$video_codec" \
-                -video-w "$video_w" \
-                -video-h "$video_h" \
-                -video-fps "$video_fps" \
-                -video-bitrate "$video_bitrate" \
-                -video-hw "$video_hw" \
-                -ffmpeg "$ffmpeg_bin"
-            case "$video_codec" in
-                qrcode)
-                    procd_append_param command \
-                        -video-qr-recovery "$video_qr_recovery" \
-                        -video-qr-size "$video_qr_size"
-                    ;;
-                tile)
-                    procd_append_param command \
-                        -video-tile-module "$video_tile_module" \
-                        -video-tile-rs "$video_tile_rs"
-                    ;;
-            esac
+    esac
+}
+
+yaml_escape() {
+    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+yaml_write_line() {
+    printf '%s\n' "$1" >> "$CONFIG_PATH"
+}
+
+validate_config() {
+    local auth_provider="$1"
+    local transport="$2"
+    local room_id="$3"
+    local key="$4"
+    local socks_host="$5"
+    local socks_user="$6"
+    local socks_pass="$7"
+    local data_dir="$8"
+
+    [ -x "$BINARY" ] || {
+        logger -t "$LOGTAG" "error: binary not found or not executable: $BINARY"
+        return 1
+    }
+
+    case "$auth_provider" in
+        jitsi|telemost|wbstream)
+            ;;
+        *)
+            logger -t "$LOGTAG" "error: unsupported auth.provider: $auth_provider"
+            return 1
             ;;
     esac
 
+    case "$transport" in
+        datachannel|vp8channel|seichannel|videochannel)
+            ;;
+        *)
+            logger -t "$LOGTAG" "error: unsupported net.transport: $transport"
+            return 1
+            ;;
+    esac
+
+    [ -n "$room_id" ] || {
+        logger -t "$LOGTAG" "error: room.id is required"
+        return 1
+    }
+
+    [ -n "$data_dir" ] || {
+        logger -t "$LOGTAG" "error: data dir is required"
+        return 1
+    }
+
+    printf '%s' "$key" | grep -Eq '^[0-9A-Fa-f]{64}$' || {
+        logger -t "$LOGTAG" "error: crypto.key must be a 64-char hex string"
+        return 1
+    }
+
+    if [ "$auth_provider" = "telemost" ] && [ "$transport" = "datachannel" ]; then
+        logger -t "$LOGTAG" "error: telemost + datachannel is unsupported"
+        return 1
+    fi
+
+    if [ "$auth_provider" = "telemost" ] && [ "$transport" = "seichannel" ]; then
+        logger -t "$LOGTAG" "error: telemost + seichannel is unsupported"
+        return 1
+    fi
+
+    if ! is_loopback_host "$socks_host" && { [ -z "$socks_user" ] || [ -z "$socks_pass" ]; }; then
+        logger -t "$LOGTAG" "error: non-loopback SOCKS host requires socks.user and socks.pass"
+        return 1
+    fi
+
+    return 0
+}
+
+write_yaml_config() {
+    local auth_provider="$1"
+    local transport="$2"
+    local room_id="$3"
+    local key="$4"
+    local socks_host="$5"
+    local socks_port="$6"
+    local socks_user="$7"
+    local socks_pass="$8"
+    local dns="$9"
+    local data_dir="${10}"
+    local debug="${11}"
+    local ffmpeg_bin="${12}"
+    local vp8_fps="${13}"
+    local vp8_batch="${14}"
+    local sei_fps="${15}"
+    local sei_batch="${16}"
+    local sei_frag="${17}"
+    local sei_ack_ms="${18}"
+    local video_codec="${19}"
+    local video_w="${20}"
+    local video_h="${21}"
+    local video_fps="${22}"
+    local video_bitrate="${23}"
+    local video_hw="${24}"
+    local video_qr_recovery="${25}"
+    local video_qr_size="${26}"
+    local video_tile_module="${27}"
+    local video_tile_rs="${28}"
+
+    mkdir -p "$CONFIG_DIR" "$data_dir"
+    : > "$CONFIG_PATH"
+
+    yaml_write_line "mode: cnc"
+    yaml_write_line "auth:"
+    yaml_write_line "  provider: \"$(yaml_escape "$auth_provider")\""
+    yaml_write_line "room:"
+    yaml_write_line "  id: \"$(yaml_escape "$room_id")\""
+    yaml_write_line "crypto:"
+    yaml_write_line "  key: \"$(yaml_escape "$key")\""
+    yaml_write_line "net:"
+    yaml_write_line "  transport: \"$(yaml_escape "$transport")\""
+    yaml_write_line "  dns: \"$(yaml_escape "$dns")\""
+    yaml_write_line "socks:"
+    yaml_write_line "  host: \"$(yaml_escape "$socks_host")\""
+    yaml_write_line "  port: ${socks_port}"
+    yaml_write_line "  user: \"$(yaml_escape "$socks_user")\""
+    yaml_write_line "  pass: \"$(yaml_escape "$socks_pass")\""
+    yaml_write_line "vp8:"
+    yaml_write_line "  fps: ${vp8_fps}"
+    yaml_write_line "  batch_size: ${vp8_batch}"
+    yaml_write_line "sei:"
+    yaml_write_line "  fps: ${sei_fps}"
+    yaml_write_line "  batch_size: ${sei_batch}"
+    yaml_write_line "  fragment_size: ${sei_frag}"
+    yaml_write_line "  ack_timeout_ms: ${sei_ack_ms}"
+    yaml_write_line "video:"
+    yaml_write_line "  width: ${video_w}"
+    yaml_write_line "  height: ${video_h}"
+    yaml_write_line "  fps: ${video_fps}"
+    yaml_write_line "  bitrate: \"$(yaml_escape "$video_bitrate")\""
+    yaml_write_line "  hw: \"$(yaml_escape "$video_hw")\""
+    yaml_write_line "  codec: \"$(yaml_escape "$video_codec")\""
+    yaml_write_line "  qr_recovery: \"$(yaml_escape "$video_qr_recovery")\""
+    yaml_write_line "  qr_size: ${video_qr_size}"
+    yaml_write_line "  tile_module: ${video_tile_module}"
+    yaml_write_line "  tile_rs: ${video_tile_rs}"
+    yaml_write_line "data: \"$(yaml_escape "$data_dir")\""
+    yaml_write_line "ffmpeg: \"$(yaml_escape "$ffmpeg_bin")\""
+    yaml_write_line "debug: $( [ "$debug" = "1" ] && printf true || printf false )"
+}
+
+start_service() {
+    local auth_provider transport room_id key
+    local socks_host socks_port socks_user socks_pass dns data_dir debug ffmpeg_bin
+    local vp8_fps vp8_batch
+    local sei_fps sei_batch sei_frag sei_ack_ms
+    local video_codec video_w video_h video_fps video_bitrate video_hw
+    local video_qr_recovery video_qr_size video_tile_module video_tile_rs
+
+    config_load olcrtc
+    config_get auth_provider      config auth_provider      'jitsi'
+    config_get transport          config transport          'datachannel'
+    config_get room_id            config room_id            ''
+    config_get key                config key                ''
+    config_get socks_host         config socks_host         '127.0.0.1'
+    config_get socks_port         config socks_port         '1080'
+    config_get socks_user         config socks_user         ''
+    config_get socks_pass         config socks_pass         ''
+    config_get dns                config dns                '1.1.1.1:53'
+    config_get data_dir           config data_dir           '/var/lib/olcrtc'
+    config_get debug              config debug              '0'
+    config_get ffmpeg_bin         config ffmpeg             'ffmpeg'
+    config_get vp8_fps            config vp8_fps            '60'
+    config_get vp8_batch          config vp8_batch          '64'
+    config_get sei_fps            config sei_fps            '60'
+    config_get sei_batch          config sei_batch          '64'
+    config_get sei_frag           config sei_frag           '900'
+    config_get sei_ack_ms         config sei_ack_ms         '2000'
+    config_get video_codec        config video_codec        'qrcode'
+    config_get video_w            config video_w            '1920'
+    config_get video_h            config video_h            '1080'
+    config_get video_fps          config video_fps          '30'
+    config_get video_bitrate      config video_bitrate      '2M'
+    config_get video_hw           config video_hw           'none'
+    config_get video_qr_recovery  config video_qr_recovery  'low'
+    config_get video_qr_size      config video_qr_size      '0'
+    config_get video_tile_module  config video_tile_module  '4'
+    config_get video_tile_rs      config video_tile_rs      '20'
+
+    validate_config \
+        "$auth_provider" "$transport" "$room_id" "$key" \
+        "$socks_host" "$socks_user" "$socks_pass" "$data_dir" || return 1
+
+    write_yaml_config \
+        "$auth_provider" "$transport" "$room_id" "$key" \
+        "$socks_host" "$socks_port" "$socks_user" "$socks_pass" \
+        "$dns" "$data_dir" "$debug" "$ffmpeg_bin" \
+        "$vp8_fps" "$vp8_batch" \
+        "$sei_fps" "$sei_batch" "$sei_frag" "$sei_ack_ms" \
+        "$video_codec" "$video_w" "$video_h" "$video_fps" "$video_bitrate" "$video_hw" \
+        "$video_qr_recovery" "$video_qr_size" "$video_tile_module" "$video_tile_rs"
+
+    logger -t "$LOGTAG" "starting client: provider=$auth_provider transport=$transport socks=${socks_host}:${socks_port}"
+
+    procd_open_instance
+    procd_set_param command "$BINARY" "$CONFIG_PATH"
     procd_set_param respawn 3600 5 0
     procd_set_param stdout 1
     procd_set_param stderr 1
-    procd_set_param pidfile "$PIDFILE"
     procd_close_instance
 }
 
 stop_service() {
-    logger -t "$LOGTAG" "Остановка клиента"
+    logger -t "$LOGTAG" "stopping client"
 }
 
 service_triggers() {
