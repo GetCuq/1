@@ -626,8 +626,8 @@ return view.extend({
         var binaryState = state.machine.arch && state.remote.binary_sha256
             ? (state.remote.binary_sha256[state.machine.arch] || '')
             : '';
-        // Compare by revision (auto-bumped on every push) — more reliable than version string.
-        // Fall back to version comparison if either side lacks a revision.
+
+        // Compare by revision (auto-bumped on every push); fall back to version
         var appUpdate;
         if (state.local.app.revision !== 'unknown' && state.remote.app_revision) {
             appUpdate = state.local.app.revision !== state.remote.app_revision;
@@ -640,30 +640,39 @@ return view.extend({
             ? state.local.binarySha.toLowerCase() !== binaryState.toLowerCase()
             : null;
 
-        // Persist so _applyUpdateButtonStates can re-apply after busy clears
         this._lastCheckState = { appUpdate: appUpdate, binaryUpdate: binaryUpdate };
 
+        // Parse date from "2026.05.22.1" → "22.05.2026"
+        function versionDate(ver) {
+            var m = /^(\d{4})\.(\d{2})\.(\d{2})/.exec(ver || '');
+            return m ? m[3] + '.' + m[2] + '.' + m[1] : '';
+        }
+
+        // Render a clean status row: name | badge | sub-text
+        function statusRow(name, update, detail) {
+            var badge, color;
+            if (update === true)       { badge = '↑ Есть обновление'; color = THEME.warning; }
+            else if (update === false) { badge = '✓ Актуально';        color = THEME.statusGood; }
+            else                       { badge = '? Неизвестно';        color = '#9aa5b4'; }
+            return E('div', {
+                style: 'display:flex;align-items:baseline;gap:12px;padding:8px 0;border-bottom:1px solid #ede5d5;flex-wrap:wrap;'
+            }, [
+                E('span', { style: 'font-weight:700;min-width:80px;color:#25313a;' }, name),
+                E('span', { style: 'font-weight:700;color:' + color + ';' }, badge),
+                detail ? E('span', { style: 'font-size:0.85em;color:#8a96a3;' }, detail) : null
+            ].filter(Boolean));
+        }
+
+        var appDate = versionDate(state.remote.app_version);
+        var appDetail = appDate ? ('последняя: ' + appDate) : '';
+
+        var archLabel = state.machine.arch ? state.machine.arch : (state.machine.machine || '');
+        var binaryDetail = archLabel ? archLabel : '';
+
         this._updateInfoEl.innerHTML = '';
-        this._updateInfoEl.appendChild(E('div', { style: THEME.updateGrid }, [
-            E('div', { style: THEME.rowLabel }, 'Панель и install.sh'),
-            E('div', {}, [
-                E('div', {}, 'Текущая: '),
-                E('span', { style: THEME.codeBox }, state.local.app.version + ' / ' + state.local.app.revision),
-                E('div', { style: 'margin-top:6px;' }, 'Доступна: '),
-                E('span', { style: THEME.codeBox }, (state.remote.app_version || 'unknown') + ' / ' + (state.remote.app_revision || 'unknown')),
-                E('div', { style: 'margin-top:8px;color:' + (appUpdate ? THEME.warning : THEME.statusGood) + ';font-weight:700;' },
-                    appUpdate === null ? 'Статус неизвестен' : (appUpdate ? 'Есть обновление' : 'Актуально'))
-            ]),
-            E('div', { style: THEME.rowLabel }, 'olcrtc binary'),
-            E('div', {}, [
-                E('div', {}, 'Архитектура: ' + (state.machine.machine || 'unknown') + (state.machine.arch ? ' (' + state.machine.arch + ')' : '')),
-                E('div', { style: 'margin-top:6px;' }, 'Текущий SHA256: '),
-                E('span', { style: THEME.codeBox }, shortHash(state.local.binarySha)),
-                E('div', { style: 'margin-top:6px;' }, 'Доступный SHA256: '),
-                E('span', { style: THEME.codeBox }, shortHash(binaryState)),
-                E('div', { style: 'margin-top:8px;color:' + (binaryUpdate ? THEME.warning : THEME.statusGood) + ';font-weight:700;' },
-                    binaryUpdate === null ? 'Статус неизвестен' : (binaryUpdate ? 'Есть обновление' : 'Актуально'))
-            ])
+        this._updateInfoEl.appendChild(E('div', {}, [
+            statusRow('Панель',  appUpdate,    appDetail),
+            statusRow('OlcRTC', binaryUpdate, binaryDetail)
         ]));
     },
 
