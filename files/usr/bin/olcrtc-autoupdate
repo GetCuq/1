@@ -55,6 +55,10 @@ chmod 755 /tmp/olcrtc.new
 mv /tmp/olcrtc.new "$BINARY"
 sha256sum "$BINARY" | awk '{print $1}' > "$SHA_FILE"
 
+# Save binary_revision so the panel can show which commit is installed
+binary_rev=$(printf '%s' "$manifest" | grep '"binary_revision"' | grep -o '"[a-f0-9]*"' | tr -d '"')
+[ -n "$binary_rev" ] && printf '%s\n' "$binary_rev" > /etc/olcrtc/binary-revision
+
 # Append one line to history log, keep last 100 entries
 ts="$(date '+%Y-%m-%d %H:%M')"
 old="${local_sha:0:12}"

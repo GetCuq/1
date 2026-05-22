@@ -597,6 +597,12 @@ return view.extend({
         });
     },
 
+    _getLocalBinaryRevision: function () {
+        return readFileText('/etc/olcrtc/binary-revision').then(function (text) {
+            return text.trim() || '';
+        }).catch(function () { return ''; });
+    },
+
     _setUpdateBusy: function (busy) {
         if (this._checkUpdatesBtn) this._checkUpdatesBtn.disabled = !!busy;
         if (this._updateAppBtn) this._updateAppBtn.disabled = !!busy;
@@ -623,11 +629,12 @@ return view.extend({
 
     _renderUpdateInfo: function (state) {
         if (!this._updateInfoEl) return;
+
         var binaryState = state.machine.arch && state.remote.binary_sha256
             ? (state.remote.binary_sha256[state.machine.arch] || '')
             : '';
 
-        // Compare by revision (auto-bumped on every push); fall back to version
+        // Panel: compare by revision (auto-bumped on every push), fall back to version
         var appUpdate;
         if (state.local.app.revision !== 'unknown' && state.remote.app_revision) {
             appUpdate = state.local.app.revision !== state.remote.app_revision;
@@ -636,43 +643,62 @@ return view.extend({
         } else {
             appUpdate = null;
         }
-        var binaryUpdate = state.local.binarySha && binaryState
-            ? state.local.binarySha.toLowerCase() !== binaryState.toLowerCase()
-            : null;
+
+        // OlcRTC binary: compare by binary_revision if available, else SHA256
+        var binaryUpdate;
+        if (state.local.binaryRevision && state.remote.binary_revision) {
+            binaryUpdate = state.local.binaryRevision !== state.remote.binary_revision;
+        } else if (state.local.binarySha && binaryState) {
+            binaryUpdate = state.local.binarySha.toLowerCase() !== binaryState.toLowerCase();
+        } else {
+            binaryUpdate = null;
+        }
 
         this._lastCheckState = { appUpdate: appUpdate, binaryUpdate: binaryUpdate };
 
-        // Parse date from "2026.05.22.1" → "22.05.2026"
-        function versionDate(ver) {
+        // "2026.05.22.1" → "22.05.2026"
+        function fmtVer(ver) {
             var m = /^(\d{4})\.(\d{2})\.(\d{2})/.exec(ver || '');
-            return m ? m[3] + '.' + m[2] + '.' + m[1] : '';
+            return m ? m[3] + '.' + m[2] + '.' + m[1] : (ver || '');
         }
 
-        // Render a clean status row: name | badge | sub-text
-        function statusRow(name, update, detail) {
-            var badge, color;
-            if (update === true)       { badge = '↑ Есть обновление'; color = THEME.warning; }
-            else if (update === false) { badge = '✓ Актуально';        color = THEME.statusGood; }
-            else                       { badge = '? Неизвестно';        color = '#9aa5b4'; }
+        // Build a row: label | current info | [arrow + new info if update]
+        function infoRow(label, update, curText, newText) {
+            var badge, badgeColor;
+            if (update === true)       { badge = '↑'; badgeColor = THEME.warning; }
+            else if (update === false) { badge = '✓'; badgeColor = THEME.statusGood; }
+            else                       { badge = '?'; badgeColor = '#9aa5b4'; }
+
+            var children = [
+                E('span', { style: 'font-weight:700;min-width:72px;flex-shrink:0;color:#25313a;' }, label),
+                E('span', { style: 'font-size:1.1em;font-weight:800;color:' + badgeColor + ';flex-shrink:0;' }, badge),
+                E('span', { style: 'font-family:monospace;font-size:0.88em;color:#4d5963;' }, curText)
+            ];
+            if (update === true && newText) {
+                children.push(E('span', { style: 'color:#9aa5b4;' }, '→'));
+                children.push(E('span', {
+                    style: 'font-family:monospace;font-size:0.88em;font-weight:700;color:' + THEME.warning + ';'
+                }, newText));
+            }
             return E('div', {
-                style: 'display:flex;align-items:baseline;gap:12px;padding:8px 0;border-bottom:1px solid #ede5d5;flex-wrap:wrap;'
-            }, [
-                E('span', { style: 'font-weight:700;min-width:80px;color:#25313a;' }, name),
-                E('span', { style: 'font-weight:700;color:' + color + ';' }, badge),
-                detail ? E('span', { style: 'font-size:0.85em;color:#8a96a3;' }, detail) : null
-            ].filter(Boolean));
+                style: 'display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid #ede5d5;flex-wrap:wrap;'
+            }, children);
         }
 
-        var appDate = versionDate(state.remote.app_version);
-        var appDetail = appDate ? ('последняя: ' + appDate) : '';
+        // Panel: "22.05.2026 · abc1234"
+        var appCur = fmtVer(state.local.app.version) + '  ·  ' + (state.local.app.revision || '?');
+        var appNew = fmtVer(state.remote.app_version) + '  ·  ' + (state.remote.app_revision || '?');
 
-        var archLabel = state.machine.arch ? state.machine.arch : (state.machine.machine || '');
-        var binaryDetail = archLabel ? archLabel : '';
+        // OlcRTC: "53e4c98" (revision) or short SHA fallback
+        var binCur = state.local.binaryRevision || shortHash(state.local.binarySha) || '?';
+        var binNew = state.remote.binary_revision || shortHash(binaryState) || '?';
+        // Append date if available
+        if (state.remote.binary_date) binNew += '  (' + fmtVer(state.remote.binary_date) + ')';
 
         this._updateInfoEl.innerHTML = '';
         this._updateInfoEl.appendChild(E('div', {}, [
-            statusRow('Панель',  appUpdate,    appDetail),
-            statusRow('OlcRTC', binaryUpdate, binaryDetail)
+            infoRow('Панель',  appUpdate,    appCur, appNew),
+            infoRow('OlcRTC', binaryUpdate, binCur, binNew)
         ]));
     },
 
@@ -691,12 +717,14 @@ return view.extend({
             self._getLocalAppVersion(),
             self._getLocalBinarySha(),
             self._getMachineArch(),
-            self._fetchManifest()
+            self._fetchManifest(),
+            self._getLocalBinaryRevision()
         ]).then(function (data) {
             var state = {
                 local: {
                     app: data[0],
-                    binarySha: data[1]
+                    binarySha: data[1],
+                    binaryRevision: data[4]
                 },
                 machine: data[2],
                 remote: data[3] || {}

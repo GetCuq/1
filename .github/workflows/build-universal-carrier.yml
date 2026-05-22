@@ -111,21 +111,28 @@ jobs:
         with:
           name: olcrtc-linux-arm64
 
-      - name: Update manifest.json
+      - name: Update manifest.json and install.sh
         run: |
           ARM64=$(sha256sum olcrtc-linux-arm64 | awk '{print $1}')
           AMD64=$(sha256sum olcrtc-linux-amd64  | awk '{print $1}')
           REV="${{ needs.check.outputs.upstream_sha }}"
+          DATE=$(date +%Y.%m.%d)
+          SHORT=$(echo "$REV" | cut -c1-7)
 
           jq --arg arm64 "$ARM64" \
              --arg amd64 "$AMD64" \
              --arg rev   "$REV"   \
+             --arg date  "$DATE"  \
             '
               .binary_sha256.arm64 = $arm64 |
               .binary_sha256.amd64 = $amd64 |
-              .binary_revision     = $rev
+              .binary_revision     = $rev   |
+              .binary_date         = $date
             ' manifest.json > /tmp/manifest.json
           mv /tmp/manifest.json manifest.json
+
+          # Keep BINARY_REVISION in install.sh in sync
+          sed -i "s|^BINARY_REVISION=.*|BINARY_REVISION=\"${SHORT}\"|" install.sh
 
       - name: Commit and push
         run: |

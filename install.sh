@@ -5,12 +5,14 @@ set -e
 REPO_RAW="https://raw.githubusercontent.com/GetCuq/1/master"
 APP_VERSION="2026.05.22.1"
 APP_REVISION="69daba7"
+BINARY_REVISION="53e4c98"
 BINARY_ARM64_URL="${REPO_RAW}/olcrtc-linux-arm64"
 BINARY_AMD64_URL="${REPO_RAW}/olcrtc-linux-amd64"
 BINARY_DST="/usr/bin/olcrtc"
 CONFIG_DIR="/etc/olcrtc"
 APP_VERSION_FILE="${CONFIG_DIR}/openwrt-app-version"
 APP_REVISION_FILE="${CONFIG_DIR}/openwrt-app-revision"
+BINARY_REVISION_FILE="${CONFIG_DIR}/binary-revision"
 BINARY_SHA_FILE="${CONFIG_DIR}/olcrtc.sha256"
 INITD="/etc/init.d/olcrtc"
 UCI_CONF="/etc/config/olcrtc"
@@ -100,8 +102,9 @@ else
 fi
 
 mkdir -p "$CONFIG_DIR"
-printf '%s\n' "$APP_VERSION" > "$APP_VERSION_FILE"
-printf '%s\n' "$APP_REVISION" > "$APP_REVISION_FILE"
+printf '%s\n' "$APP_VERSION"     > "$APP_VERSION_FILE"
+printf '%s\n' "$APP_REVISION"    > "$APP_REVISION_FILE"
+printf '%s\n' "$BINARY_REVISION" > "$BINARY_REVISION_FILE"
 if command -v sha256sum >/dev/null 2>&1; then
     sha256sum "$BINARY_DST" | awk '{print $1}' > "$BINARY_SHA_FILE"
 fi
