@@ -532,8 +532,11 @@ return view.extend({
             .catch(function (err) { console.error('[OlcRTC] UCI bulk save error:', err); });
     },
 
-    _fetchRemoteText: function (url, extraHeaders, tmpPath) {
-        var args = [ '-O', tmpPath, '--timeout=30', '--no-check-certificate', '--user-agent=olcrtc-openwrt' ];
+    _fetchRemoteText: function (url, extraHeaders) {
+        // Use -O - (stdout) so rpcd captures the response directly.
+        // Avoids writing+reading a temp file through two separate RPC calls,
+        // which silently returns empty on some OpenWrt/rpcd builds.
+        var args = [ '-q', '-O', '-', '--timeout=30', '--no-check-certificate', '-U', 'olcrtc-openwrt' ];
         (extraHeaders || []).forEach(function (header) {
             args.push('--header=' + header);
         });
@@ -543,17 +546,14 @@ return view.extend({
             if (res.code !== 0) {
                 throw new Error((res.stderr || res.stdout || 'wget завершился с кодом ' + res.code).trim());
             }
-            return readFileText(tmpPath);
-        }).then(function (text) {
-            if (!text || !text.trim()) throw new Error('Сервер вернул пустой ответ');
+            var text = res.stdout || '';
+            if (!text.trim()) throw new Error('Сервер вернул пустой ответ');
             return text;
-        }).finally(function () {
-            return removeFile(tmpPath);
         });
     },
 
     _fetchManifest: function () {
-        return this._fetchRemoteText(MANIFEST_URL, [], '/tmp/olcrtc-manifest.json').then(function (text) {
+        return this._fetchRemoteText(MANIFEST_URL, []).then(function (text) {
             try {
                 return JSON.parse(text);
             } catch (e) {
@@ -860,10 +860,7 @@ return view.extend({
     _fetchSubscription: function (url) {
         var hwid = uci.get('olcrtc', 'config', 'hwid') || '';
         var headers = hwid ? [ 'X-HWID: ' + hwid ] : [];
-        return this._fetchRemoteText(url, headers, '/tmp/olcrtc-subscription.txt').then(function (text) {
-            if (!text.trim()) throw new Error('Пустой ответ от сервера');
-            return text;
-        });
+        return this._fetchRemoteText(url, headers);
     },
 
     _renderSubscriptionBlock: function (entry, sub) {
