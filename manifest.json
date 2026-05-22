@@ -1,7 +1,7 @@
 {
   "channel": "stable",
   "app_version": "2026.05.22.1",
-  "app_revision": "2026-05-22-fixes2",
+  "app_revision": "2812474",
   "binary_revision": "53e4c98",
   "binary_sha256": {
     "arm64": "2aafe2a62195848aa31035a7f8a8046710dff0a88099ece38a7e06d957337bf5",
