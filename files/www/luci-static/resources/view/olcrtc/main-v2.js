@@ -516,6 +516,7 @@ return view.extend({
     _checkUpdatesBtn: null,
     _updateAppBtn: null,
     _updateBinaryBtn: null,
+    _lastCheckState: null,
 
     load: function () {
         return Promise.all([ uci.load('olcrtc'), getStatus() ]);
@@ -599,6 +600,24 @@ return view.extend({
         if (this._checkUpdatesBtn) this._checkUpdatesBtn.disabled = !!busy;
         if (this._updateAppBtn) this._updateAppBtn.disabled = !!busy;
         if (this._updateBinaryBtn) this._updateBinaryBtn.disabled = !!busy;
+        // After releasing the busy lock, re-apply known update states
+        // (so buttons that are up-to-date stay greyed out)
+        if (!busy) this._applyUpdateButtonStates();
+    },
+
+    _applyUpdateButtonStates: function () {
+        var s = this._lastCheckState;
+        if (!s) return;
+        // Disable button only when we KNOW there is no update (false).
+        // null = unknown → keep enabled so user can trigger the update.
+        if (this._updateAppBtn) {
+            this._updateAppBtn.disabled = (s.appUpdate === false);
+            this._updateAppBtn.title    = (s.appUpdate === false) ? 'Панель актуальна' : '';
+        }
+        if (this._updateBinaryBtn) {
+            this._updateBinaryBtn.disabled = (s.binaryUpdate === false);
+            this._updateBinaryBtn.title    = (s.binaryUpdate === false) ? 'Бинарник актуален' : '';
+        }
     },
 
     _renderUpdateInfo: function (state) {
@@ -619,6 +638,9 @@ return view.extend({
         var binaryUpdate = state.local.binarySha && binaryState
             ? state.local.binarySha.toLowerCase() !== binaryState.toLowerCase()
             : null;
+
+        // Persist so _applyUpdateButtonStates can re-apply after busy clears
+        this._lastCheckState = { appUpdate: appUpdate, binaryUpdate: binaryUpdate };
 
         this._updateInfoEl.innerHTML = '';
         this._updateInfoEl.appendChild(E('div', { style: THEME.updateGrid }, [
@@ -1013,6 +1035,12 @@ return view.extend({
             return;
         }
 
+        // Show placeholder immediately — don't wait for RPC chain to finish
+        var pendingEl = E('div', { style: 'margin-top:12px;' }, [
+            E('div', { style: THEME.softPanel + 'color:#6f7a83;' }, '⏳ Сохранение подписки: ' + url)
+        ]);
+        self._subsContainer.appendChild(pendingEl);
+
         callUciAdd('olcrtc', 'subscription')
             .then(function (section) {
                 // callUciAdd has expect:{section:''} — LuCI returns the string directly
@@ -1021,9 +1049,11 @@ return view.extend({
                 });
             })
             .then(function (sectionName) {
+                pendingEl.remove();
                 self._createSubscription(sectionName, url);
             })
             .catch(function (err) {
+                pendingEl.remove();
                 ui.addNotification(null, E('p', {}, 'Не удалось добавить подписку: ' + err));
             });
     },
@@ -1036,7 +1066,6 @@ return view.extend({
                 if (!self._subscriptions) return;
                 for (var i = 0; i < self._subscriptions.length; i++) {
                     if (self._subscriptions[i].sectionName === sectionName) {
-                        if (self._subscriptions[i].timer) clearTimeout(self._subscriptions[i].timer);
                         self._subscriptions[i].blockEl.remove();
                         self._subscriptions.splice(i, 1);
                         break;
