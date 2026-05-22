@@ -2,9 +2,9 @@
   "channel": "stable",
   "app_version": "2026.05.22.1",
   "app_revision": "2026-05-22-ui-update",
-  "binary_revision": "",
+  "binary_revision": "53e4c98",
   "binary_sha256": {
-    "arm64": "7b0e6d90dfd313c98db1dc1068a6aa685bb80b6f20a49dd5e2ec8a58bd2ece12",
-    "amd64": "1891ccfd04df2e8a064cb0264cd5b2a01a115aaee308ccd5c011e8dbd9d8e176"
+    "arm64": "2aafe2a62195848aa31035a7f8a8046710dff0a88099ece38a7e06d957337bf5",
+    "amd64": "efcce723a082757bd27a481de33de0021d42d995e6af78ffe46bba14781b2836"
   }
 }
