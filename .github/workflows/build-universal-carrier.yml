@@ -1,102 +1,109 @@
-name: Build universal-carrier binaries
+name: Build and publish olcrtc binaries
 
+# Triggers:
+#  - manually via Actions UI (workflow_dispatch)
+#  - every day at 03:00 UTC — skips commit if binaries haven't changed
 on:
   workflow_dispatch:
-    inputs:
-      update_repo_binaries:
-        description: "Commit built binaries back to this repository"
-        required: false
-        default: false
-        type: boolean
-  push:
-    branches:
-      - main
-    paths:
-      - .github/workflows/build-universal-carrier.yml
-
-permissions:
-  contents: write
+  schedule:
+    - cron: '0 3 * * *'
 
 jobs:
+  # ── 1. Build amd64 and arm64 in parallel ─────────────────────────────────
   build:
     name: Build ${{ matrix.goarch }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - goarch: amd64
-            output: olcrtc-linux-amd64
-          - goarch: arm64
-            output: olcrtc-linux-arm64
+        goarch: [amd64, arm64]
 
     steps:
-      - name: Checkout current repository
-        uses: actions/checkout@v4
-
-      - name: Checkout upstream universal-carrier
+      - name: Checkout openlibrecommunity/olcrtc
         uses: actions/checkout@v4
         with:
           repository: openlibrecommunity/olcrtc
           ref: refactor/universal-carrier
-          path: upstream-olcrtc
 
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: upstream-olcrtc/go.mod
+          go-version-file: go.mod
           check-latest: true
 
-      - name: Build binary
-        working-directory: upstream-olcrtc
+      - name: Build
         env:
           CGO_ENABLED: 0
           GOOS: linux
           GOARCH: ${{ matrix.goarch }}
         run: |
-          mkdir -p ../dist
-          go build -trimpath -ldflags="-s -w" -o "../dist/${{ matrix.output }}" ./cmd/olcrtc
+          go build -trimpath -ldflags="-s -w" \
+            -o olcrtc-linux-${{ matrix.goarch }} \
+            ./cmd/olcrtc
 
-      - name: Upload binary artifact
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.output }}
-          path: dist/${{ matrix.output }}
+          name: olcrtc-linux-${{ matrix.goarch }}
+          path: olcrtc-linux-${{ matrix.goarch }}
           if-no-files-found: error
 
-  publish-to-repo:
-    name: Update repository binaries
+  # ── 2. Push binaries + updated manifest.json to GetCuq/1 ─────────────────
+  publish:
+    name: Publish to GetCuq/1
     runs-on: ubuntu-latest
     needs: build
-    if: github.event_name == 'workflow_dispatch' && inputs.update_repo_binaries
 
     steps:
-      - name: Checkout current repository
+      - name: Checkout GetCuq/1
         uses: actions/checkout@v4
         with:
-          persist-credentials: true
+          repository: GetCuq/1
+          token: ${{ secrets.DIST_REPO_TOKEN }}
+          ref: master
 
-      - name: Download amd64 artifact
+      - name: Download amd64 binary
         uses: actions/download-artifact@v4
         with:
           name: olcrtc-linux-amd64
-          path: .
 
-      - name: Download arm64 artifact
+      - name: Download arm64 binary
         uses: actions/download-artifact@v4
         with:
           name: olcrtc-linux-arm64
-          path: .
 
-      - name: Generate checksums
+      - name: Get upstream commit SHA
+        id: upstream
         run: |
-          sha256sum olcrtc-linux-amd64 olcrtc-linux-arm64 > SHA256SUMS
+          git clone --depth 1 --branch refactor/universal-carrier \
+            https://github.com/openlibrecommunity/olcrtc.git _upstream
+          echo "sha=$(git -C _upstream rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          rm -rf _upstream
 
-      - name: Commit updated binaries
+      - name: Update manifest.json
         run: |
-          git config user.name "github-actions[bot]"
+          ARM64=$(sha256sum olcrtc-linux-arm64 | awk '{print $1}')
+          AMD64=$(sha256sum olcrtc-linux-amd64  | awk '{print $1}')
+          REV="${{ steps.upstream.outputs.sha }}"
+
+          jq --arg arm64 "$ARM64" \
+             --arg amd64 "$AMD64" \
+             --arg rev   "$REV"   \
+            '
+              .binary_sha256.arm64  = $arm64 |
+              .binary_sha256.amd64  = $amd64 |
+              .binary_revision      = $rev
+            ' manifest.json > /tmp/manifest.json
+          mv /tmp/manifest.json manifest.json
+
+      - name: Commit and push
+        run: |
+          chmod 755 olcrtc-linux-arm64 olcrtc-linux-amd64
+          git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add olcrtc-linux-amd64 olcrtc-linux-arm64 SHA256SUMS
-          git diff --cached --quiet && exit 0
-          git commit -m "chore: update universal-carrier binaries"
+          git add olcrtc-linux-arm64 olcrtc-linux-amd64 manifest.json
+          git diff --cached --quiet \
+            && echo "Binaries unchanged — nothing to push." \
+            && exit 0
+          git commit -m "chore: update olcrtc binaries (upstream ${{ steps.upstream.outputs.sha }})"
           git push
