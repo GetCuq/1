@@ -12,7 +12,8 @@ UCI_CONF="/etc/config/olcrtc"
 LUCI_MENU="/usr/share/luci/menu.d/luci-app-olcrtc.json"
 LUCI_ACL="/usr/share/rpcd/acl.d/luci-app-olcrtc.json"
 LUCI_VIEW_DIR="/www/luci-static/resources/view/olcrtc"
-LUCI_VIEW="${LUCI_VIEW_DIR}/main-v2.js"
+LUCI_VIEW_MAIN="${LUCI_VIEW_DIR}/main.js"
+LUCI_VIEW_V2="${LUCI_VIEW_DIR}/main-v2.js"
 
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -115,8 +116,8 @@ wget -q -O "$LUCI_ACL" "${REPO_RAW}/files/usr/share/rpcd/acl.d/luci-app-olcrtc.j
 
 info "Installing LuCI frontend..."
 mkdir -p "$LUCI_VIEW_DIR"
-wget -q -O "$LUCI_VIEW" "${REPO_RAW}/files/www/luci-static/resources/view/olcrtc/main-v2.js" || error "Failed to download LuCI view"
-rm -f "${LUCI_VIEW_DIR}/main.js"
+wget -q -O "$LUCI_VIEW_MAIN" "${REPO_RAW}/files/www/luci-static/resources/view/olcrtc/main.js" || error "Failed to download LuCI main.js"
+wget -q -O "$LUCI_VIEW_V2" "${REPO_RAW}/files/www/luci-static/resources/view/olcrtc/main-v2.js" || error "Failed to download LuCI main-v2.js"
 
 info "Clearing LuCI caches..."
 rm -f /tmp/luci-indexcache
