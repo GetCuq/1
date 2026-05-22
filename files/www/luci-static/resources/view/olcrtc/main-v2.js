@@ -1048,6 +1048,7 @@ return view.extend({
                 self._refreshSubscription(entry);
             })
         }, 'Обновить подписку');
+        entry.refreshBtn = refreshBtn;   // so _refreshSubscription can update button state
 
         var removeBtn = E('button', {
             class: 'btn cbi-button cbi-button-remove',
@@ -1061,24 +1062,51 @@ return view.extend({
 
     _refreshSubscription: function (entry) {
         var self = this;
+
+        // Prevent concurrent fetches; show loading state
+        if (entry.fetching) return Promise.resolve();
+        entry.fetching = true;
+        if (entry.refreshBtn) {
+            entry.refreshBtn.disabled = true;
+            entry.refreshBtn.textContent = '⏳ Загрузка...';
+        }
+
         return self._fetchSubscription(entry.url).then(function (text) {
             var sub = parseSubscription(text);
             if (!sub) {
-                entry.blockEl.innerHTML = '';
-                entry.blockEl.appendChild(card('Подписка', [
-                    E('div', { style: 'color:#cf222e;' }, 'Не удалось разобрать sub.md')
-                ]));
+                self._showSubscriptionError(entry, 'Не удалось разобрать sub.md');
                 return;
             }
             // Track when we last successfully refreshed (shown in UI instead of "неизвестно")
             entry.lastRefreshed = Math.floor(Date.now() / 1000);
             self._renderSubscriptionBlock(entry, sub);
         }).catch(function (err) {
-            entry.blockEl.innerHTML = '';
-            entry.blockEl.appendChild(card('Подписка', [
-                E('div', { style: 'color:#cf222e;' }, 'Ошибка загрузки: ' + err)
-            ]));
+            self._showSubscriptionError(entry, 'Ошибка загрузки: ' + err);
+        }).then(function () {
+            entry.fetching = false;
+            // Restore button state if it's still in DOM (not replaced by re-render)
+            if (entry.refreshBtn && entry.refreshBtn.isConnected) {
+                entry.refreshBtn.disabled = false;
+                entry.refreshBtn.textContent = 'Обновить подписку';
+            }
         });
+    },
+
+    _showSubscriptionError: function (entry, message) {
+        var self = this;
+        var retryBtn = E('button', {
+            class: 'btn cbi-button cbi-button-action',
+            style: 'margin-top:10px;',
+            click: ui.createHandlerFn(this, function () {
+                self._refreshSubscription(entry);
+            })
+        }, 'Повторить');
+        entry.blockEl.innerHTML = '';
+        entry.blockEl.appendChild(card(null, [
+            E('div', { style: 'color:#cf222e;margin-bottom:8px;' }, message),
+            E('div', { style: 'font-size:0.82em;color:#6f7a83;margin-bottom:8px;' }, 'URL: ' + entry.url),
+            retryBtn
+        ]));
     },
 
     _createSubscription: function (sectionName, url) {
@@ -1096,7 +1124,9 @@ return view.extend({
             sectionName: sectionName,
             url: url,
             blockEl: blockEl,
-            lastRefreshed: 0
+            lastRefreshed: 0,
+            fetching: false,
+            refreshBtn: null
         };
 
         if (!self._subscriptions) self._subscriptions = [];
