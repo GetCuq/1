@@ -64,5 +64,11 @@ tail -n 100 "$LOG_FILE" > /tmp/_au_log 2>/dev/null && mv /tmp/_au_log "$LOG_FILE
 
 logger -t olcrtc-autoupdate "updated: ${old:-unknown} -> $new_sha"
 
-# Restart the service so the new binary is picked up
-/etc/init.d/olcrtc restart 2>/dev/null || true
+# Restart only if the service is currently running.
+# If the user stopped it manually — leave it stopped.
+if pidof olcrtc >/dev/null 2>&1; then
+    /etc/init.d/olcrtc restart 2>/dev/null || true
+    logger -t olcrtc-autoupdate "service restarted"
+else
+    logger -t olcrtc-autoupdate "service was stopped — not restarting"
+fi
