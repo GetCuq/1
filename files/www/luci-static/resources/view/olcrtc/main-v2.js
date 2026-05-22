@@ -56,8 +56,10 @@ var callExec = rpc.declare({
 var callExecFull = rpc.declare({
     object: 'file',
     method: 'exec',
-    params: [ 'command', 'params', 'env' ],
-    expect: { code: 0, stdout: '', stderr: '' }
+    params: [ 'command', 'params', 'env' ]
+    // No `expect` — LuCI's expect with multiple keys only returns the FIRST key's
+    // value (it breaks after one iteration), so {code,stdout,stderr} would return
+    // just the code number, making stdout permanently inaccessible.
 });
 
 var MATRIX = {
@@ -127,8 +129,9 @@ var THEME = {
 };
 
 function execStdout(command, params, env) {
+    // callExec has expect:{stdout:''} — LuCI returns the stdout string directly
     return callExec(command, params || [], env || null).then(function (res) {
-        return (res && typeof res.stdout === 'string') ? res.stdout : '';
+        return typeof res === 'string' ? res : '';
     });
 }
 
