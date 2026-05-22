@@ -111,6 +111,7 @@ var THEME = {
     rowLabel: 'font-weight:700;margin-bottom:5px;color:#25313a;',
     rowDesc: 'font-size:0.85em;color:#6f7a83;margin-bottom:8px;line-height:1.45;',
     input: 'width:100%;box-sizing:border-box;padding:11px 12px;border-radius:12px;border:1px solid #cbbfae;background:#fffaf0;color:#22303a;font-family:inherit;font-size:1em;box-shadow:inset 0 1px 2px rgba(53,39,17,0.05);',
+    inputSelect: 'width:100%;box-sizing:border-box;padding:7px 12px;border-radius:12px;border:1px solid #cbbfae;background:#fffaf0;color:#22303a;font-family:inherit;font-size:1em;',
     inputMono: 'font-family:monospace;',
     note: 'margin-top:10px;padding:10px 12px;border-radius:12px;background:#f7f2e8;border:1px solid #ddd1c0;',
     statusGood: '#2f855a',
@@ -1317,7 +1318,7 @@ return view.extend({
 
         var providerSel = E('select', {
             class: 'cbi-input-select',
-            style: THEME.input,
+            style: THEME.inputSelect,
             change: function (ev) {
                 self._saveField('auth_provider', ev.target.value);
                 self._updateMatrix(ev.target.value, transportSel.value);
@@ -1331,7 +1332,7 @@ return view.extend({
 
         var transportSel = E('select', {
             class: 'cbi-input-select',
-            style: THEME.input,
+            style: THEME.inputSelect,
             change: function (ev) {
                 self._saveField('transport', ev.target.value);
                 self._updateTransportVisibility(ev.target.value);
@@ -1429,7 +1430,7 @@ return view.extend({
         var seiAckInput = numInput('sei_ack_ms', cfg.sei_ack_ms, '2000', 1, 60000);
         var videoCodecSel = E('select', {
             class: 'cbi-input-select',
-            style: THEME.input,
+            style: THEME.inputSelect,
             change: function (ev) { self._saveField('video_codec', ev.target.value); }
         }, [
             E('option', { value: 'qrcode', selected: cfg.video_codec === 'qrcode' ? '' : null }, 'qrcode'),
@@ -1441,7 +1442,7 @@ return view.extend({
         var videoBitrateInput = textInput('video_bitrate', cfg.video_bitrate, '2M');
         var videoHwSel = E('select', {
             class: 'cbi-input-select',
-            style: THEME.input,
+            style: THEME.inputSelect,
             change: function (ev) { self._saveField('video_hw', ev.target.value); }
         }, [
             E('option', { value: 'none', selected: cfg.video_hw === 'none' ? '' : null }, 'none'),
@@ -1449,7 +1450,7 @@ return view.extend({
         ]);
         var qrRecoverySel = E('select', {
             class: 'cbi-input-select',
-            style: THEME.input,
+            style: THEME.inputSelect,
             change: function (ev) { self._saveField('video_qr_recovery', ev.target.value); }
         }, [
             E('option', { value: 'low', selected: cfg.video_qr_recovery === 'low' ? '' : null }, 'low'),
@@ -1550,7 +1551,7 @@ return view.extend({
         // ── Auto-update UI ────────────────────────────────────────────────────
         var autoUpdateToggle = E('select', {
             class: 'cbi-input-select',
-            style: 'width:auto;margin-right:10px;'
+            style: 'width:auto;margin-right:10px;padding:7px 12px;font-family:inherit;font-size:1em;border-radius:12px;border:1px solid #cbbfae;background:#fffaf0;color:#22303a;'
         }, [
             E('option', { value: '0', selected: cfg.auto_update !== '1' ? 'selected' : null }, 'Выключено'),
             E('option', { value: '1', selected: cfg.auto_update === '1' ? 'selected' : null }, 'Включено')
@@ -1565,7 +1566,7 @@ return view.extend({
         ];
         var autoUpdateInterval = E('select', {
             class: 'cbi-input-select',
-            style: 'width:auto;'
+            style: 'width:auto;padding:7px 12px;font-family:inherit;font-size:1em;border-radius:12px;border:1px solid #cbbfae;background:#fffaf0;color:#22303a;'
         }, intervalOpts.map(function (o) {
             return E('option', {
                 value: o.v,
