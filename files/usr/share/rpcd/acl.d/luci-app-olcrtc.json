@@ -19,7 +19,9 @@
         "/bin/logread": [ "exec" ],
         "/usr/bin/sha256sum": [ "exec" ],
         "/usr/bin/wget": [ "exec" ],
-        "/var/run/olcrtc.pid": [ "read" ]
+        "/var/run/olcrtc.pid": [ "read" ],
+        "/etc/olcrtc/update-history.log": [ "read" ],
+        "/usr/bin/olcrtc-autoupdate": [ "exec" ]
       }
     },
     "write": {

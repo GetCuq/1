@@ -129,6 +129,15 @@ mkdir -p "$LUCI_VIEW_DIR"
 wget -q -O "$LUCI_VIEW_MAIN" "${REPO_RAW}/files/www/luci-static/resources/view/olcrtc/main.js" || error "Failed to download LuCI main.js"
 wget -q -O "$LUCI_VIEW_V2" "${REPO_RAW}/files/www/luci-static/resources/view/olcrtc/main-v2.js" || error "Failed to download LuCI main-v2.js"
 
+info "Installing auto-update script..."
+wget -q -O /usr/bin/olcrtc-autoupdate "${REPO_RAW}/files/usr/bin/olcrtc-autoupdate" || error "Failed to download auto-update script"
+chmod 755 /usr/bin/olcrtc-autoupdate
+
+# Ensure new UCI options exist (no-op on fresh install, safe on upgrade)
+uci -q get olcrtc.config.auto_update          >/dev/null 2>&1 || uci set olcrtc.config.auto_update='0'
+uci -q get olcrtc.config.auto_update_interval >/dev/null 2>&1 || uci set olcrtc.config.auto_update_interval='24'
+uci commit olcrtc
+
 info "Clearing LuCI caches..."
 rm -f /tmp/luci-indexcache
 rm -rf /tmp/luci-modulecache/*

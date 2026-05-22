@@ -100,6 +100,7 @@ var LOGREAD_PATHS = [ '/sbin/logread', '/usr/sbin/logread', '/bin/logread' ];
 var REPO_RAW = 'https://raw.githubusercontent.com/GetCuq/1/master';
 var INSTALL_URL = REPO_RAW + '/install.sh';
 var MANIFEST_URL = REPO_RAW + '/manifest.json';
+var AUTO_UPDATE_LOG = '/etc/olcrtc/update-history.log';
 
 var THEME = {
     page: 'padding:24px;background:linear-gradient(180deg,#f5f1e8 0%,#eee6d7 100%);min-height:100vh;color:#28323c;',
@@ -767,6 +768,45 @@ return view.extend({
         });
     },
 
+    // ── Auto-update settings ──────────────────────────────────────────────────
+
+    _saveAutoUpdate: function (enabled, interval) {
+        var self = this;
+        return callUciSet('olcrtc', 'config', {
+            auto_update:          enabled,
+            auto_update_interval: interval
+        }).then(function () {
+            return callUciCommit('olcrtc');
+        }).then(function () {
+            // Trigger init.d reload so setup_cron() picks up the new values
+            return callInitAction('olcrtc', 'reload');
+        }).then(function () {
+            self._setUpdateStatus('Настройки авто-обновления сохранены.', THEME.statusGood);
+        }).catch(function (err) {
+            self._setUpdateStatus('Ошибка сохранения: ' + err, THEME.statusBad);
+        });
+    },
+
+    _loadAutoUpdateHistory: function (el) {
+        execResult('/bin/cat', [ AUTO_UPDATE_LOG ], null).then(function (res) {
+            var lines = (res.stdout || '').trim().split('\n').filter(Boolean).reverse();
+            if (!lines.length) {
+                el.textContent = 'Обновлений пока не было.';
+                return;
+            }
+            el.innerHTML = '';
+            lines.slice(0, 20).forEach(function (line) {
+                el.appendChild(E('div', {
+                    style: 'font-family:monospace;font-size:0.85em;padding:2px 0;border-bottom:1px solid #ede5d5;'
+                }, line));
+            });
+        }).catch(function () {
+            el.textContent = 'Лог недоступен.';
+        });
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+
     _updateUI: function (status) {
         if (this._statusEl) {
             this._statusEl.textContent = status.running
@@ -881,7 +921,9 @@ return view.extend({
             video_qr_size: uci.get('olcrtc', 'config', 'video_qr_size') || '0',
             video_tile_module: uci.get('olcrtc', 'config', 'video_tile_module') || '4',
             video_tile_rs: uci.get('olcrtc', 'config', 'video_tile_rs') || '20',
-            ffmpeg: uci.get('olcrtc', 'config', 'ffmpeg') || 'ffmpeg'
+            ffmpeg: uci.get('olcrtc', 'config', 'ffmpeg') || 'ffmpeg',
+            auto_update:          uci.get('olcrtc', 'config', 'auto_update')          || '0',
+            auto_update_interval: uci.get('olcrtc', 'config', 'auto_update_interval') || '24'
         };
     },
 
@@ -1437,11 +1479,75 @@ return view.extend({
         self._updateAppBtn = updateAppBtn;
         self._updateBinaryBtn = updateBinaryBtn;
 
+        // ── Auto-update UI ────────────────────────────────────────────────────
+        var autoUpdateToggle = E('select', {
+            class: 'cbi-input-select',
+            style: 'width:auto;margin-right:10px;'
+        }, [
+            E('option', { value: '0', selected: cfg.auto_update !== '1' ? 'selected' : null }, 'Выключено'),
+            E('option', { value: '1', selected: cfg.auto_update === '1' ? 'selected' : null }, 'Включено')
+        ]);
+
+        var intervalOpts = [
+            { v: '1',  label: 'Каждый час' },
+            { v: '3',  label: 'Каждые 3 часа' },
+            { v: '6',  label: 'Каждые 6 часов' },
+            { v: '12', label: 'Каждые 12 часов' },
+            { v: '24', label: 'Раз в сутки (03:00)' }
+        ];
+        var autoUpdateInterval = E('select', {
+            class: 'cbi-input-select',
+            style: 'width:auto;'
+        }, intervalOpts.map(function (o) {
+            return E('option', {
+                value: o.v,
+                selected: cfg.auto_update_interval === o.v ? 'selected' : null
+            }, o.label);
+        }));
+
+        var saveAutoUpdateBtn = E('button', {
+            class: 'btn cbi-button cbi-button-action',
+            style: 'margin-top:10px;',
+            click: ui.createHandlerFn(this, function () {
+                return self._saveAutoUpdate(autoUpdateToggle.value, autoUpdateInterval.value);
+            })
+        }, 'Сохранить настройки');
+
+        var historyEl = E('div', {
+            style: THEME.softPanel + 'margin-top:10px;min-height:32px;color:#6f7a83;'
+        }, 'Нажмите «Обновить историю», чтобы загрузить.');
+
+        var refreshHistoryBtn = E('button', {
+            class: 'btn cbi-button',
+            style: 'margin-top:8px;',
+            click: ui.createHandlerFn(this, function () {
+                historyEl.textContent = '⏳ Загрузка...';
+                self._loadAutoUpdateHistory(historyEl);
+            })
+        }, 'Обновить историю');
+
+        var autoUpdateSection = E('div', { style: 'margin-top:18px;padding-top:16px;border-top:1px solid #ded4c4;' }, [
+            E('div', { style: THEME.cardTitle }, 'Авто-обновление olcrtc'),
+            E('div', { style: THEME.rowDesc }, 'Роутер сам проверяет наличие нового бинарника и обновляется по расписанию без браузера.'),
+            E('div', { style: 'display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:10px;' }, [
+                E('span', { style: THEME.rowLabel + 'margin:0;' }, 'Режим:'),
+                autoUpdateToggle,
+                E('span', { style: THEME.rowLabel + 'margin:0;' }, 'Интервал:'),
+                autoUpdateInterval
+            ]),
+            saveAutoUpdateBtn,
+            E('div', { style: THEME.rowLabel + 'margin-top:16px;margin-bottom:6px;' }, 'История обновлений'),
+            historyEl,
+            refreshHistoryBtn
+        ]);
+        // ─────────────────────────────────────────────────────────────────────
+
         var updateCard = card('Обновление', [
             E('div', { style: THEME.rowDesc + 'margin-bottom:12px;' }, 'Проверка обновлений не пишет ничего в flash. Обновление панели перекачивает LuCI-файлы и install.sh, а обновление olcrtc заменяет только бинарник и перезапускает сервис.'),
             updateInfoEl,
             updateStatusEl,
-            E('div', { style: 'margin-top:14px;' }, [ checkUpdatesBtn, updateAppBtn, updateBinaryBtn ])
+            E('div', { style: 'margin-top:14px;' }, [ checkUpdatesBtn, updateAppBtn, updateBinaryBtn ]),
+            autoUpdateSection
         ]);
 
         self._updateTransportVisibility(cfg.transport);

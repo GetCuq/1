@@ -227,10 +227,48 @@ start_service() {
     procd_set_param stdout 1
     procd_set_param stderr 1
     procd_close_instance
+
+    setup_cron
 }
 
 stop_service() {
     logger -t "$LOGTAG" "stopping client"
+}
+
+# Map hour-interval to a cron time expression
+_cron_expr() {
+    case "$1" in
+        1)  printf '0 * * * *'   ;;
+        3)  printf '0 */3 * * *' ;;
+        6)  printf '0 */6 * * *' ;;
+        12) printf '0 */12 * * *';;
+        *)  printf '0 3 * * *'   ;;  # 24 h or anything else → daily at 03:00
+    esac
+}
+
+# Add or remove the olcrtc-autoupdate cron entry based on UCI settings
+setup_cron() {
+    local auto_update interval cron_file expr
+    config_load olcrtc
+    config_get auto_update  config auto_update          "0"
+    config_get interval     config auto_update_interval "24"
+
+    cron_file="/etc/crontabs/root"
+    touch "$cron_file"
+
+    # Remove any existing olcrtc-autoupdate line first
+    grep -v 'olcrtc-autoupdate' "$cron_file" > /tmp/_cron_tmp 2>/dev/null \
+        && mv /tmp/_cron_tmp "$cron_file"
+
+    if [ "$auto_update" = "1" ]; then
+        expr="$(_cron_expr "$interval")"
+        printf '%s /usr/bin/olcrtc-autoupdate\n' "$expr" >> "$cron_file"
+        logger -t "$LOGTAG" "auto-update cron set: $expr"
+    else
+        logger -t "$LOGTAG" "auto-update cron disabled"
+    fi
+
+    /etc/init.d/cron reload 2>/dev/null || true
 }
 
 service_triggers() {
@@ -238,6 +276,7 @@ service_triggers() {
 }
 
 reload_service() {
+    setup_cron
     stop
     start
 }

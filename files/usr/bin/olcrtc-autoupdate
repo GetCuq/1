@@ -1,0 +1,68 @@
+#!/bin/sh
+# olcrtc-autoupdate — background auto-update for the olcrtc binary.
+# Invoked by cron; managed by /etc/init.d/olcrtc via UCI auto_update option.
+
+MANIFEST_URL="https://raw.githubusercontent.com/GetCuq/1/master/manifest.json"
+REPO_RAW="https://raw.githubusercontent.com/GetCuq/1/master"
+BINARY="/usr/bin/olcrtc"
+SHA_FILE="/etc/olcrtc/olcrtc.sha256"
+LOG_FILE="/etc/olcrtc/update-history.log"
+
+# Determine arch key used in manifest.json
+arch="$(uname -m)"
+case "$arch" in
+    aarch64|arm64) arch_key="arm64" ;;
+    x86_64|amd64)  arch_key="amd64" ;;
+    *)
+        logger -t olcrtc-autoupdate "unsupported arch: $arch"
+        exit 1
+        ;;
+esac
+
+# Fetch manifest — exit silently on network error; cron will retry next run
+manifest=$(wget -qO- --timeout=15 --no-check-certificate "$MANIFEST_URL" 2>/dev/null) || exit 0
+[ -n "$manifest" ] || exit 0
+
+# Parse SHA256 for our arch from JSON (BusyBox grep, no jq)
+# Manifest format:  "arm64": "aabbcc...64hexchars"
+remote_sha=$(printf '%s' "$manifest" \
+    | grep -o '"'"$arch_key"'"[^,}]*' \
+    | grep -o '"[a-f0-9]\{64\}"' \
+    | tr -d '"')
+[ -n "$remote_sha" ] || exit 0
+
+# Get local SHA from cache file, or compute it fresh
+local_sha=$(cat "$SHA_FILE" 2>/dev/null)
+if [ -z "$local_sha" ] && [ -x "$BINARY" ]; then
+    local_sha=$(sha256sum "$BINARY" 2>/dev/null | awk '{print $1}')
+fi
+
+# Already up to date — exit without logging
+[ "$remote_sha" = "$local_sha" ] && exit 0
+
+# Download new binary to a temp path, then atomically replace
+case "$arch" in
+    aarch64|arm64) url="${REPO_RAW}/olcrtc-linux-arm64" ;;
+    *)             url="${REPO_RAW}/olcrtc-linux-amd64" ;;
+esac
+
+if ! wget -qO /tmp/olcrtc.new --timeout=60 --no-check-certificate "$url" 2>/dev/null; then
+    logger -t olcrtc-autoupdate "download failed"
+    exit 1
+fi
+
+chmod 755 /tmp/olcrtc.new
+mv /tmp/olcrtc.new "$BINARY"
+sha256sum "$BINARY" | awk '{print $1}' > "$SHA_FILE"
+
+# Append one line to history log, keep last 100 entries
+ts="$(date '+%Y-%m-%d %H:%M')"
+old="${local_sha:0:12}"
+new_sha="${remote_sha:0:12}"
+printf '%s  %s -> %s\n' "$ts" "${old:-unknown}" "$new_sha" >> "$LOG_FILE"
+tail -n 100 "$LOG_FILE" > /tmp/_au_log 2>/dev/null && mv /tmp/_au_log "$LOG_FILE"
+
+logger -t olcrtc-autoupdate "updated: ${old:-unknown} -> $new_sha"
+
+# Restart the service so the new binary is picked up
+/etc/init.d/olcrtc restart 2>/dev/null || true
