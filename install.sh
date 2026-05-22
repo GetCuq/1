@@ -4,7 +4,7 @@ set -e
 
 REPO_RAW="https://raw.githubusercontent.com/GetCuq/1/master"
 APP_VERSION="2026.05.22.1"
-APP_REVISION="5d5a408"
+APP_REVISION="4e7da86"
 BINARY_ARM64_URL="${REPO_RAW}/olcrtc-linux-arm64"
 BINARY_AMD64_URL="${REPO_RAW}/olcrtc-linux-amd64"
 BINARY_DST="/usr/bin/olcrtc"
