@@ -53,6 +53,13 @@ var callExec = rpc.declare({
     expect: { stdout: '' }
 });
 
+var callExecFull = rpc.declare({
+    object: 'file',
+    method: 'exec',
+    params: [ 'command', 'params', 'env' ],
+    expect: { code: 0, stdout: '', stderr: '' }
+});
+
 var MATRIX = {
     telemost: {
         datachannel: 'bad',
@@ -112,6 +119,16 @@ var THEME = {
 function execStdout(command, params, env) {
     return callExec(command, params || [], env || null).then(function (res) {
         return (res && typeof res.stdout === 'string') ? res.stdout : '';
+    });
+}
+
+function execResult(command, params, env) {
+    return callExecFull(command, params || [], env || null).then(function (res) {
+        return {
+            code: res && typeof res.code === 'number' ? res.code : 0,
+            stdout: (res && typeof res.stdout === 'string') ? res.stdout : '',
+            stderr: (res && typeof res.stderr === 'string') ? res.stderr : ''
+        };
     });
 }
 
@@ -616,10 +633,19 @@ return view.extend({
 
     _fetchSubscription: function (url) {
         var hwid = uci.get('olcrtc', 'config', 'hwid') || '';
-        var args = [ '-q', '-O', '-', '--timeout=15', '-U', 'olcrtc-openwrt' ];
+        var args = [ '-q', '-O', '-', '--timeout=15', '--no-check-certificate', '-U', 'olcrtc-openwrt' ];
         if (hwid) args.push('--header=X-HWID: ' + hwid);
         args.push(url);
-        return execStdout('/usr/bin/wget', args, null);
+        return execResult('/usr/bin/wget', args, null).then(function (res) {
+            var text = String(res.stdout || '').replace(/^\uFEFF/, '');
+            if (res.code !== 0) {
+                throw new Error((res.stderr || text || 'wget exited with code ' + res.code).trim());
+            }
+            if (!text.trim()) {
+                throw new Error('Пустой ответ от сервера');
+            }
+            return text;
+        });
     },
 
     _renderSubscriptionBlock: function (entry, sub) {
