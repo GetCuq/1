@@ -3,16 +3,22 @@
 set -e
 
 REPO_RAW="https://raw.githubusercontent.com/GetCuq/1/master"
+APP_VERSION="2026.05.22.1"
+APP_REVISION="2026-05-22-ui-update"
 BINARY_ARM64_URL="${REPO_RAW}/olcrtc-linux-arm64"
 BINARY_AMD64_URL="${REPO_RAW}/olcrtc-linux-amd64"
 BINARY_DST="/usr/bin/olcrtc"
 CONFIG_DIR="/etc/olcrtc"
+APP_VERSION_FILE="${CONFIG_DIR}/openwrt-app-version"
+APP_REVISION_FILE="${CONFIG_DIR}/openwrt-app-revision"
+BINARY_SHA_FILE="${CONFIG_DIR}/olcrtc.sha256"
 INITD="/etc/init.d/olcrtc"
 UCI_CONF="/etc/config/olcrtc"
 LUCI_MENU="/usr/share/luci/menu.d/luci-app-olcrtc.json"
 LUCI_ACL="/usr/share/rpcd/acl.d/luci-app-olcrtc.json"
 LUCI_VIEW_DIR="/www/luci-static/resources/view/olcrtc"
-LUCI_VIEW="${LUCI_VIEW_DIR}/main.js"
+LUCI_VIEW_MAIN="${LUCI_VIEW_DIR}/main.js"
+LUCI_VIEW_V2="${LUCI_VIEW_DIR}/main-v2.js"
 
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -94,6 +100,11 @@ else
 fi
 
 mkdir -p "$CONFIG_DIR"
+printf '%s\n' "$APP_VERSION" > "$APP_VERSION_FILE"
+printf '%s\n' "$APP_REVISION" > "$APP_REVISION_FILE"
+if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$BINARY_DST" | awk '{print $1}' > "$BINARY_SHA_FILE"
+fi
 
 HWID_CUR="$(uci get olcrtc.config.hwid 2>/dev/null || true)"
 if [ -z "$HWID_CUR" ]; then
@@ -115,7 +126,12 @@ wget -q -O "$LUCI_ACL" "${REPO_RAW}/files/usr/share/rpcd/acl.d/luci-app-olcrtc.j
 
 info "Installing LuCI frontend..."
 mkdir -p "$LUCI_VIEW_DIR"
-wget -q -O "$LUCI_VIEW" "${REPO_RAW}/files/www/luci-static/resources/view/olcrtc/main.js" || error "Failed to download LuCI view"
+wget -q -O "$LUCI_VIEW_MAIN" "${REPO_RAW}/files/www/luci-static/resources/view/olcrtc/main.js" || error "Failed to download LuCI main.js"
+wget -q -O "$LUCI_VIEW_V2" "${REPO_RAW}/files/www/luci-static/resources/view/olcrtc/main-v2.js" || error "Failed to download LuCI main-v2.js"
+
+info "Clearing LuCI caches..."
+rm -f /tmp/luci-indexcache
+rm -rf /tmp/luci-modulecache/*
 
 info "Restarting services..."
 /etc/init.d/rpcd restart 2>/dev/null || warn "rpcd restart failed"

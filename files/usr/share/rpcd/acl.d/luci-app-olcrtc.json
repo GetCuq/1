@@ -10,7 +10,14 @@
         "rc": [ "init" ]
       },
       "file": {
+        "/bin/cat": [ "exec" ],
+        "/bin/rm": [ "exec" ],
+        "/bin/sh": [ "exec" ],
+        "/bin/uname": [ "exec" ],
         "/sbin/logread": [ "exec" ],
+        "/usr/sbin/logread": [ "exec" ],
+        "/bin/logread": [ "exec" ],
+        "/usr/bin/sha256sum": [ "exec" ],
         "/usr/bin/wget": [ "exec" ],
         "/var/run/olcrtc.pid": [ "read" ]
       }
