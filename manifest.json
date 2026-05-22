@@ -1,7 +1,7 @@
 {
   "channel": "stable",
   "app_version": "2026.05.22.1",
-  "app_revision": "77642ba",
+  "app_revision": "9ef350b",
   "binary_revision": "53e4c98",
   "binary_date": "2026.05.22",
   "binary_sha256": {
