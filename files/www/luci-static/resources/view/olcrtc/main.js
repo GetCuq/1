@@ -132,6 +132,21 @@ function execResult(command, params, env) {
     });
 }
 
+function readFileText(path) {
+    return execResult('/bin/cat', [ path ], null).then(function (res) {
+        if (res.code !== 0) {
+            throw new Error((res.stderr || 'Не удалось прочитать временный файл').trim());
+        }
+        return String(res.stdout || '').replace(/^\uFEFF/, '');
+    });
+}
+
+function removeFile(path) {
+    return execResult('/bin/rm', [ '-f', path ], null).catch(function () {
+        return null;
+    });
+}
+
 function pad2(n) {
     return n < 10 ? '0' + n : String(n);
 }
@@ -633,18 +648,20 @@ return view.extend({
 
     _fetchSubscription: function (url) {
         var hwid = uci.get('olcrtc', 'config', 'hwid') || '';
-        var args = [ '-q', '-O', '-', '--timeout=15', '--no-check-certificate', '-U', 'olcrtc-openwrt' ];
+        var tmpPath = '/tmp/olcrtc-subscription.txt';
+        var args = [ '-q', '-O', tmpPath, '--timeout=15', '--no-check-certificate', '-U', 'olcrtc-openwrt' ];
         if (hwid) args.push('--header=X-HWID: ' + hwid);
         args.push(url);
         return execResult('/usr/bin/wget', args, null).then(function (res) {
-            var text = String(res.stdout || '').replace(/^\uFEFF/, '');
             if (res.code !== 0) {
-                throw new Error((res.stderr || text || 'wget exited with code ' + res.code).trim());
+                throw new Error((res.stderr || 'wget exited with code ' + res.code).trim());
             }
-            if (!text.trim()) {
-                throw new Error('Пустой ответ от сервера');
-            }
+            return readFileText(tmpPath);
+        }).then(function (text) {
+            if (!text.trim()) throw new Error('Пустой ответ от сервера');
             return text;
+        }).finally(function () {
+            return removeFile(tmpPath);
         });
     },
 

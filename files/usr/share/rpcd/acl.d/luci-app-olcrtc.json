@@ -10,6 +10,8 @@
         "rc": [ "init" ]
       },
       "file": {
+        "/bin/cat": [ "exec" ],
+        "/bin/rm": [ "exec" ],
         "/sbin/logread": [ "exec" ],
         "/usr/sbin/logread": [ "exec" ],
         "/bin/logread": [ "exec" ],
