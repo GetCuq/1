@@ -12,7 +12,7 @@ UCI_CONF="/etc/config/olcrtc"
 LUCI_MENU="/usr/share/luci/menu.d/luci-app-olcrtc.json"
 LUCI_ACL="/usr/share/rpcd/acl.d/luci-app-olcrtc.json"
 LUCI_VIEW_DIR="/www/luci-static/resources/view/olcrtc"
-LUCI_VIEW="${LUCI_VIEW_DIR}/main.js"
+LUCI_VIEW="${LUCI_VIEW_DIR}/main-v2.js"
 
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -115,7 +115,12 @@ wget -q -O "$LUCI_ACL" "${REPO_RAW}/files/usr/share/rpcd/acl.d/luci-app-olcrtc.j
 
 info "Installing LuCI frontend..."
 mkdir -p "$LUCI_VIEW_DIR"
-wget -q -O "$LUCI_VIEW" "${REPO_RAW}/files/www/luci-static/resources/view/olcrtc/main.js" || error "Failed to download LuCI view"
+wget -q -O "$LUCI_VIEW" "${REPO_RAW}/files/www/luci-static/resources/view/olcrtc/main-v2.js" || error "Failed to download LuCI view"
+rm -f "${LUCI_VIEW_DIR}/main.js"
+
+info "Clearing LuCI caches..."
+rm -f /tmp/luci-indexcache
+rm -rf /tmp/luci-modulecache/*
 
 info "Restarting services..."
 /etc/init.d/rpcd restart 2>/dev/null || warn "rpcd restart failed"
