@@ -87,6 +87,28 @@ var TRANSPORT_LABELS = {
     videochannel: 'videochannel'
 };
 
+var LOGREAD_PATHS = [ '/sbin/logread', '/usr/sbin/logread', '/bin/logread' ];
+
+var THEME = {
+    page: 'padding:24px;background:linear-gradient(180deg,#f5f1e8 0%,#eee6d7 100%);min-height:100vh;color:#28323c;',
+    heroTitle: 'margin:0 0 8px 0;font-size:2rem;font-weight:800;letter-spacing:-0.02em;color:#25313a;',
+    heroText: 'color:#5e6b76;max-width:860px;line-height:1.5;',
+    card: 'background:#fffdf8;border:1px solid #ded4c4;border-radius:18px;padding:18px;box-sizing:border-box;height:100%;box-shadow:0 14px 32px rgba(62,49,27,0.08);',
+    cardTitle: 'font-size:0.74em;text-transform:uppercase;letter-spacing:0.12em;color:#7b6d58;margin-bottom:14px;font-weight:800;',
+    rowLabel: 'font-weight:700;margin-bottom:5px;color:#25313a;',
+    rowDesc: 'font-size:0.85em;color:#6f7a83;margin-bottom:8px;line-height:1.45;',
+    input: 'width:100%;box-sizing:border-box;padding:11px 12px;border-radius:12px;border:1px solid #cbbfae;background:#fffaf0;color:#22303a;box-shadow:inset 0 1px 2px rgba(53,39,17,0.05);',
+    inputMono: 'font-family:monospace;',
+    note: 'margin-top:10px;padding:10px 12px;border-radius:12px;background:#f7f2e8;border:1px solid #ddd1c0;',
+    statusGood: '#2f855a',
+    statusBad: '#c53030',
+    tableBorder: '#ded4c4',
+    logs: 'background:linear-gradient(180deg,#24313b 0%,#1d2730 100%);color:#edf3f7;padding:14px;max-height:360px;overflow:auto;border-radius:14px;margin:0;border:1px solid #31404d;box-shadow:inset 0 1px 0 rgba(255,255,255,0.04);',
+    serverCard: 'cursor:pointer;flex:1 1 220px;min-width:220px;max-width:320px;padding:12px;border:1px solid #ddd2c1;border-radius:14px;background:#fffaf2;box-shadow:0 8px 20px rgba(62,49,27,0.06);',
+    serverCardActive: 'border-color:#2f855a;background:#eef9f0;box-shadow:0 10px 24px rgba(47,133,90,0.14);',
+    buttonGap: 'margin-left:8px;'
+};
+
 function execStdout(command, params, env) {
     return callExec(command, params || [], env || null).then(function (res) {
         return (res && typeof res.stdout === 'string') ? res.stdout : '';
@@ -137,6 +159,21 @@ function statusMeta(kind) {
 
 function compatibilityKind(provider, transport) {
     return (MATRIX[provider] && MATRIX[provider][transport]) || 'bad';
+}
+
+function normalizeSubscriptionText(text) {
+    return String(text || '')
+        .replace(/\r/g, '')
+        .replace(/\s+(?=(?:olcrtc:\/\/|##(?:name|color|icon|used|available|ip|comment):|#(?:name|update|refresh|color|icon|used|available):))/g, '\n')
+        .trim();
+}
+
+function readLogread(path, params) {
+    return execStdout(path, params, null).then(function (stdout) {
+        return stdout ? stdout : '';
+    }).catch(function () {
+        return '';
+    });
 }
 
 function parseTransportParams(transport, paramsStr) {
@@ -228,7 +265,7 @@ function parseOlcrtcUri(raw) {
 }
 
 function parseSubscription(text) {
-    var lines = text.split('\n');
+    var lines = normalizeSubscriptionText(text).split('\n');
     var sub = {
         name: '',
         update: 0,
@@ -313,7 +350,7 @@ function getStatus() {
     });
 }
 
-function getLogs() {
+function getLogsLegacy() {
     return execStdout('/sbin/logread', ['-e', 'olcrtc'], null)
         .then(function (stdout) {
             if (stdout) return stdout;
@@ -330,7 +367,7 @@ function getLogs() {
         });
 }
 
-function row(label, desc, node) {
+function rowLegacy(label, desc, node) {
     return E('div', { style: 'margin-bottom:14px;' }, [
         E('div', { style: 'font-weight:600;margin-bottom:4px;' }, label),
         E('div', { style: 'font-size:0.85em;color:#6b7280;margin-bottom:6px;' }, desc),
@@ -338,12 +375,57 @@ function row(label, desc, node) {
     ]);
 }
 
-function card(title, nodes) {
+function cardLegacy(title, nodes) {
     return E('div', {
         style: 'background:#fff;border:1px solid #d0d7de;border-radius:12px;padding:16px;box-sizing:border-box;height:100%;'
     }, [
         E('div', { style: 'font-size:0.75em;text-transform:uppercase;letter-spacing:0.08em;color:#57606a;margin-bottom:14px;font-weight:700;' }, title)
     ].concat(Array.isArray(nodes) ? nodes : [nodes]));
+}
+
+function getLogs() {
+    function tryFiltered(idx) {
+        if (idx >= LOGREAD_PATHS.length) return Promise.resolve('');
+        return readLogread(LOGREAD_PATHS[idx], [ '-e', 'olcrtc' ]).then(function (stdout) {
+            return stdout || tryFiltered(idx + 1);
+        });
+    }
+
+    function tryFull(idx) {
+        if (idx >= LOGREAD_PATHS.length) return Promise.resolve('');
+        return readLogread(LOGREAD_PATHS[idx], []).then(function (stdout) {
+            return stdout || tryFull(idx + 1);
+        });
+    }
+
+    return tryFiltered(0).then(function (stdout) {
+        if (stdout) return stdout;
+        return tryFull(0).then(function (full) {
+            if (!full) return '(Логи пока пусты)';
+            var lines = full.split('\n').filter(function (line) {
+                return line.toLowerCase().indexOf('olcrtc') !== -1;
+            });
+            return lines.length ? lines.join('\n') : '(Записей с отметкой olcrtc пока нет)';
+        });
+    }).catch(function () {
+        return '(logread недоступен)';
+    });
+}
+
+function row(label, desc, node) {
+    return E('div', { style: 'margin-bottom:14px;' }, [
+        E('div', { style: THEME.rowLabel }, label),
+        E('div', { style: THEME.rowDesc }, desc),
+        node
+    ]);
+}
+
+function card(title, nodes) {
+    return E('div', {
+        style: THEME.card
+    }, [
+        title ? E('div', { style: THEME.cardTitle }, title) : null
+    ].concat(Array.isArray(nodes) ? nodes : [nodes]).filter(Boolean));
 }
 
 return view.extend({
@@ -391,7 +473,7 @@ return view.extend({
             this._statusEl.textContent = status.running
                 ? 'Работает' + (status.pid ? ' (PID ' + status.pid + ')' : '')
                 : 'Остановлен';
-            this._statusEl.style.color = status.running ? '#1a7f37' : '#cf222e';
+            this._statusEl.style.color = status.running ? THEME.statusGood : THEME.statusBad;
         }
         if (this._startBtn) this._startBtn.disabled = !!status.running;
         if (this._stopBtn) this._stopBtn.disabled = !status.running;
@@ -445,7 +527,8 @@ return view.extend({
         });
         var active = cells[provider + ':' + transport];
         if (active) {
-            active.style.outline = '2px solid #0969da';
+            active.style.outline = '2px solid #0f766e';
+            active.style.background = '#eef6ff';
             active.style.outlineOffset = '-2px';
         }
 
@@ -461,7 +544,7 @@ return view.extend({
         var kind = compatibilityKind(provider, transport);
         var meta = statusMeta(kind);
         return E('div', {
-            style: 'margin-top:10px;padding:10px 12px;border-radius:8px;background:#f6f8fa;border:1px solid #d0d7de;color:' + meta.color + ';'
+            style: THEME.note + 'color:' + meta.color + ';'
         }, meta.icon + ' ' + meta.text);
     },
 
@@ -527,7 +610,7 @@ return view.extend({
 
             if (self._selectedServer) self._selectedServer.card.style.cssText = self._selectedServer.baseStyle;
             self._selectedServer = { card: cardEl, baseStyle: baseStyle };
-            cardEl.style.cssText = baseStyle + 'border-color:#1f883d;background:#eefbf3;';
+            cardEl.style.cssText = baseStyle + THEME.serverCardActive;
         });
     },
 
@@ -546,8 +629,8 @@ return view.extend({
 
         var header = [
             E('div', { style: 'font-weight:700;font-size:1.05em;margin-bottom:4px;' }, (sub.icon ? sub.icon + ' ' : '') + (sub.name || entry.url)),
-            E('div', { style: 'font-size:0.82em;color:#57606a;margin-bottom:2px;' }, 'URL: ' + entry.url),
-            E('div', { style: 'font-size:0.82em;color:#57606a;margin-bottom:10px;' },
+            E('div', { style: 'font-size:0.82em;color:#6f7a83;margin-bottom:2px;' }, 'URL: ' + entry.url),
+            E('div', { style: 'font-size:0.82em;color:#6f7a83;margin-bottom:10px;' },
                 'Обновлено: ' + (sub.update ? fmtDate(sub.update) : 'неизвестно') +
                 ' | refresh: ' + refreshLabel(sub.refresh))
         ];
@@ -559,17 +642,16 @@ return view.extend({
             var meta = statusMeta(kind);
             var title = server.name || (server.icon ? server.icon + ' ' : '') || (p.mimo ? p.mimo.split('/')[0].trim() : '');
             if (!title) title = 'Server ' + (idx + 1);
-            var baseStyle = 'cursor:pointer;flex:1 1 220px;min-width:220px;max-width:320px;padding:12px;' +
-                'border:1px solid #d0d7de;border-radius:10px;background:#fff;';
+            var baseStyle = THEME.serverCard;
             var cardEl = E('div', { style: baseStyle, click: function () { self._applyServer(server, cardEl, baseStyle); } }, [
                 E('div', { style: 'display:flex;justify-content:space-between;gap:8px;margin-bottom:6px;' }, [
                     E('strong', {}, title),
                     E('span', { style: 'color:' + meta.color + ';font-size:0.82em;' }, meta.icon)
                 ]),
-                E('div', { style: 'font-size:0.84em;color:#57606a;margin-bottom:3px;' }, PROVIDER_LABELS[p.auth_provider] + ' / ' + TRANSPORT_LABELS[p.transport]),
-                server.comment ? E('div', { style: 'font-size:0.82em;color:#57606a;margin-bottom:3px;' }, server.comment) : null,
-                server.ip ? E('div', { style: 'font-size:0.82em;color:#57606a;margin-bottom:3px;' }, 'IP: ' + server.ip) : null,
-                server.available ? E('div', { style: 'font-size:0.82em;color:#57606a;' }, 'Available: ' + server.available) : null
+                E('div', { style: 'font-size:0.84em;color:#6f7a83;margin-bottom:3px;' }, PROVIDER_LABELS[p.auth_provider] + ' / ' + TRANSPORT_LABELS[p.transport]),
+                server.comment ? E('div', { style: 'font-size:0.82em;color:#6f7a83;margin-bottom:3px;' }, server.comment) : null,
+                server.ip ? E('div', { style: 'font-size:0.82em;color:#6f7a83;margin-bottom:3px;' }, 'IP: ' + server.ip) : null,
+                server.available ? E('div', { style: 'font-size:0.82em;color:#6f7a83;' }, 'Available: ' + server.available) : null
             ].filter(Boolean));
             wrap.appendChild(cardEl);
         });
@@ -692,6 +774,7 @@ return view.extend({
                 type: 'text',
                 value: value,
                 placeholder: placeholder || '',
+                style: THEME.input,
                 change: function (ev) {
                     self._saveField(key, ev.target.value);
                     if (extraHandler) extraHandler(ev.target.value);
@@ -707,6 +790,7 @@ return view.extend({
                 placeholder: placeholder || '',
                 min: String(min),
                 max: String(max),
+                style: THEME.input,
                 change: function (ev) {
                     self._saveField(key, ev.target.value);
                 }
@@ -722,7 +806,7 @@ return view.extend({
         }, 'Start');
         var stopBtn = E('button', {
             class: 'btn cbi-button cbi-button-remove',
-            style: 'margin-left:8px;',
+            style: THEME.buttonGap,
             click: ui.createHandlerFn(this, function () { return self._runAction('stop'); })
         }, 'Stop');
         self._startBtn = startBtn;
@@ -736,13 +820,13 @@ return view.extend({
             E('div', {}, [ startBtn, stopBtn ])
         ]);
 
-        var uriHint = E('div', { style: 'font-size:0.82em;color:#57606a;margin-top:6px;' },
+        var uriHint = E('div', { style: 'font-size:0.82em;color:#6f7a83;margin-top:6px;' },
             'Поддерживается olcrtc://... и https://... на sub.md');
         var uriInput = E('input', {
             class: 'cbi-input-text',
             type: 'text',
             placeholder: 'olcrtc://... или https://example.com/sub.md',
-            style: 'font-family:monospace;',
+            style: THEME.input + THEME.inputMono,
             change: function (ev) {
                 var val = (ev.target.value || '').trim();
                 if (!val) return;
@@ -793,6 +877,7 @@ return view.extend({
 
         var providerSel = E('select', {
             class: 'cbi-input-select',
+            style: THEME.input,
             change: function (ev) {
                 self._saveField('auth_provider', ev.target.value);
                 self._updateMatrix(ev.target.value, transportSel.value);
@@ -806,6 +891,7 @@ return view.extend({
 
         var transportSel = E('select', {
             class: 'cbi-input-select',
+            style: THEME.input,
             change: function (ev) {
                 self._saveField('transport', ev.target.value);
                 self._updateTransportVisibility(ev.target.value);
@@ -826,26 +912,26 @@ return view.extend({
 
         var matrixTable = E('table', {
             class: 'table',
-            style: 'width:100%;border-collapse:collapse;'
+            style: 'width:100%;border-collapse:collapse;background:#fffaf2;border-radius:12px;overflow:hidden;'
         }, [
             E('tr', {}, [
-                E('th', { style: 'text-align:left;padding:8px;border-bottom:1px solid #d0d7de;' }, 'Transport'),
-                E('th', { style: 'text-align:center;padding:8px;border-bottom:1px solid #d0d7de;' }, 'Telemost'),
-                E('th', { style: 'text-align:center;padding:8px;border-bottom:1px solid #d0d7de;' }, 'WBStream'),
-                E('th', { style: 'text-align:center;padding:8px;border-bottom:1px solid #d0d7de;' }, 'Jitsi')
+                E('th', { style: 'text-align:left;padding:10px;border-bottom:1px solid ' + THEME.tableBorder + ';color:#55626d;' }, 'Transport'),
+                E('th', { style: 'text-align:center;padding:10px;border-bottom:1px solid ' + THEME.tableBorder + ';color:#55626d;' }, 'Telemost'),
+                E('th', { style: 'text-align:center;padding:10px;border-bottom:1px solid ' + THEME.tableBorder + ';color:#55626d;' }, 'WBStream'),
+                E('th', { style: 'text-align:center;padding:10px;border-bottom:1px solid ' + THEME.tableBorder + ';color:#55626d;' }, 'Jitsi')
             ])
         ]);
 
         [ 'datachannel', 'vp8channel', 'seichannel', 'videochannel' ].forEach(function (transport) {
             var tr = E('tr', {}, [
-                E('td', { style: 'padding:8px;border-bottom:1px solid #d8dee4;font-weight:600;' }, transport)
+                E('td', { style: 'padding:10px;border-bottom:1px solid ' + THEME.tableBorder + ';font-weight:700;color:#25313a;' }, transport)
             ]);
 
             [ 'telemost', 'wbstream', 'jitsi' ].forEach(function (provider) {
                 var kind = compatibilityKind(provider, transport);
                 var meta = statusMeta(kind);
                 var td = E('td', {
-                    style: 'padding:8px;border-bottom:1px solid #d8dee4;text-align:center;color:' + meta.color + ';'
+                    style: 'padding:10px;border-bottom:1px solid ' + THEME.tableBorder + ';text-align:center;color:' + meta.color + ';font-weight:700;'
                 }, meta.icon);
                 self._matrixCells[provider + ':' + transport] = td;
                 tr.appendChild(td);
@@ -854,7 +940,7 @@ return view.extend({
             matrixTable.appendChild(tr);
         });
 
-        var comboNote = E('div', { style: 'margin-top:10px;padding:10px 12px;border-radius:8px;background:#f6f8fa;border:1px solid #d0d7de;' }, '');
+        var comboNote = E('div', { style: THEME.note }, '');
         self._comboNote = comboNote;
 
         var baseCard = card('Базовые настройки', [
@@ -903,6 +989,7 @@ return view.extend({
         var seiAckInput = numInput('sei_ack_ms', cfg.sei_ack_ms, '2000', 1, 60000);
         var videoCodecSel = E('select', {
             class: 'cbi-input-select',
+            style: THEME.input,
             change: function (ev) { self._saveField('video_codec', ev.target.value); }
         }, [
             E('option', { value: 'qrcode', selected: cfg.video_codec === 'qrcode' ? '' : null }, 'qrcode'),
@@ -914,6 +1001,7 @@ return view.extend({
         var videoBitrateInput = textInput('video_bitrate', cfg.video_bitrate, '2M');
         var videoHwSel = E('select', {
             class: 'cbi-input-select',
+            style: THEME.input,
             change: function (ev) { self._saveField('video_hw', ev.target.value); }
         }, [
             E('option', { value: 'none', selected: cfg.video_hw === 'none' ? '' : null }, 'none'),
@@ -921,6 +1009,7 @@ return view.extend({
         ]);
         var qrRecoverySel = E('select', {
             class: 'cbi-input-select',
+            style: THEME.input,
             change: function (ev) { self._saveField('video_qr_recovery', ev.target.value); }
         }, [
             E('option', { value: 'low', selected: cfg.video_qr_recovery === 'low' ? '' : null }, 'low'),
@@ -990,7 +1079,7 @@ return view.extend({
         ]);
 
         var logsEl = E('pre', {
-            style: 'background:#0d1117;color:#c9d1d9;padding:12px;max-height:360px;overflow:auto;border-radius:10px;margin:0;'
+            style: THEME.logs
         }, 'Загрузка логов...');
         self._logsEl = logsEl;
         var logsCard = card('Логи', [ logsEl ]);
@@ -1011,9 +1100,9 @@ return view.extend({
             return E('div', { style: 'flex:' + width + ';min-width:280px;' }, [ node ]);
         }
 
-        return E('div', { style: 'padding:16px;' }, [
+        return E('div', { style: THEME.page }, [
             E('div', { style: 'margin-bottom:18px;' }, [
-                E('h2', { style: 'margin:0 0 6px 0;' }, 'OlcRTC OpenWrt'),
+                E('h2', { style: THEME.heroTitle }, 'OlcRTC OpenWrt'),
                 E('div', { style: 'color:#57606a;' }, 'LuCI-панель для ветки universal-carrier: provider + transport + YAML runtime')
             ]),
             flex([
