@@ -110,7 +110,7 @@ var THEME = {
     cardTitle: 'font-size:0.74em;text-transform:uppercase;letter-spacing:0.12em;color:#7b6d58;margin-bottom:14px;font-weight:800;',
     rowLabel: 'font-weight:700;margin-bottom:5px;color:#25313a;',
     rowDesc: 'font-size:0.85em;color:#6f7a83;margin-bottom:8px;line-height:1.45;',
-    input: 'width:100%;box-sizing:border-box;padding:11px 12px;border-radius:12px;border:1px solid #cbbfae;background:#fffaf0;color:#22303a;box-shadow:inset 0 1px 2px rgba(53,39,17,0.05);',
+    input: 'width:100%;box-sizing:border-box;padding:11px 12px;border-radius:12px;border:1px solid #cbbfae;background:#fffaf0;color:#22303a;font-family:inherit;font-size:1em;box-shadow:inset 0 1px 2px rgba(53,39,17,0.05);',
     inputMono: 'font-family:monospace;',
     note: 'margin-top:10px;padding:10px 12px;border-radius:12px;background:#f7f2e8;border:1px solid #ddd1c0;',
     statusGood: '#2f855a',
@@ -689,11 +689,12 @@ return view.extend({
         var appCur = fmtVer(state.local.app.version) + '  ·  ' + (state.local.app.revision || '?');
         var appNew = fmtVer(state.remote.app_version) + '  ·  ' + (state.remote.app_revision || '?');
 
-        // OlcRTC: "53e4c98" (revision) or short SHA fallback
+        // OlcRTC: "53e4c98 (22.05.2026)" — date shown wherever we know it
+        var binDate = state.remote.binary_date ? '  (' + fmtVer(state.remote.binary_date) + ')' : '';
         var binCur = state.local.binaryRevision || shortHash(state.local.binarySha) || '?';
+        if (binaryUpdate === false) binCur += binDate;   // up-to-date → current revision has this date
         var binNew = state.remote.binary_revision || shortHash(binaryState) || '?';
-        // Append date if available
-        if (state.remote.binary_date) binNew += '  (' + fmtVer(state.remote.binary_date) + ')';
+        if (binaryUpdate === true)  binNew += binDate;   // update available → show date for new version
 
         this._updateInfoEl.innerHTML = '';
         this._updateInfoEl.appendChild(E('div', {}, [
