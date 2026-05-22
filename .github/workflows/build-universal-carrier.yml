@@ -1,21 +1,58 @@
 name: Build and publish olcrtc binaries
 
 # Triggers:
-#  - manually via Actions UI (workflow_dispatch)
-#  - every day at 03:00 UTC — skips commit if binaries haven't changed
+#  - every hour: check job does a fast git ls-remote (no clone needed),
+#    build only starts if upstream commit changed vs manifest.json
+#  - manual via Actions UI: always builds regardless of SHA
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 3 * * *'
+    - cron: '0 * * * *'   # every hour
 
 permissions:
-  contents: write   # allows the publish job to commit back to GetCuq/1
+  contents: write
 
 jobs:
-  # ── 1. Build amd64 and arm64 in parallel ─────────────────────────────────
+  # ── 1. Fast upstream change detection (no clone, ~1 sec) ─────────────────
+  check:
+    name: Check for upstream changes
+    runs-on: ubuntu-latest
+    outputs:
+      needs_build:  ${{ steps.cmp.outputs.needs_build }}
+      upstream_sha: ${{ steps.cmp.outputs.upstream_sha }}
+
+    steps:
+      - name: Checkout GetCuq/1
+        uses: actions/checkout@v4
+        with:
+          ref: master
+
+      - name: Compare upstream SHA vs manifest.json
+        id: cmp
+        run: |
+          UPSTREAM_SHA=$(git ls-remote \
+            https://github.com/openlibrecommunity/olcrtc.git \
+            refs/heads/refactor/universal-carrier \
+            | awk '{print $1}')
+
+          STORED_REV=$(jq -r '.binary_revision // ""' manifest.json)
+
+          echo "upstream_sha=$UPSTREAM_SHA" >> $GITHUB_OUTPUT
+
+          if [ "$UPSTREAM_SHA" = "$STORED_REV" ]; then
+            echo "needs_build=false" >> $GITHUB_OUTPUT
+            echo "Up to date — upstream=$UPSTREAM_SHA"
+          else
+            echo "needs_build=true"  >> $GITHUB_OUTPUT
+            echo "Change detected: $STORED_REV -> $UPSTREAM_SHA"
+          fi
+
+  # ── 2. Build amd64 and arm64 in parallel ─────────────────────────────────
   build:
     name: Build ${{ matrix.goarch }}
     runs-on: ubuntu-latest
+    needs: check
+    if: needs.check.outputs.needs_build == 'true' || github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
@@ -51,11 +88,12 @@ jobs:
           path: olcrtc-linux-${{ matrix.goarch }}
           if-no-files-found: error
 
-  # ── 2. Push binaries + updated manifest.json to GetCuq/1 ─────────────────
+  # ── 3. Push binaries + updated manifest.json to GetCuq/1 ─────────────────
   publish:
     name: Publish to GetCuq/1
     runs-on: ubuntu-latest
-    needs: build
+    needs: [check, build]
+    if: needs.check.outputs.needs_build == 'true' || github.event_name == 'workflow_dispatch'
 
     steps:
       - name: Checkout GetCuq/1
@@ -73,27 +111,19 @@ jobs:
         with:
           name: olcrtc-linux-arm64
 
-      - name: Get upstream commit SHA
-        id: upstream
-        run: |
-          git clone --depth 1 --branch refactor/universal-carrier \
-            https://github.com/openlibrecommunity/olcrtc.git _upstream
-          echo "sha=$(git -C _upstream rev-parse --short HEAD)" >> $GITHUB_OUTPUT
-          rm -rf _upstream
-
       - name: Update manifest.json
         run: |
           ARM64=$(sha256sum olcrtc-linux-arm64 | awk '{print $1}')
           AMD64=$(sha256sum olcrtc-linux-amd64  | awk '{print $1}')
-          REV="${{ steps.upstream.outputs.sha }}"
+          REV="${{ needs.check.outputs.upstream_sha }}"
 
           jq --arg arm64 "$ARM64" \
              --arg amd64 "$AMD64" \
              --arg rev   "$REV"   \
             '
-              .binary_sha256.arm64  = $arm64 |
-              .binary_sha256.amd64  = $amd64 |
-              .binary_revision      = $rev
+              .binary_sha256.arm64 = $arm64 |
+              .binary_sha256.amd64 = $amd64 |
+              .binary_revision     = $rev
             ' manifest.json > /tmp/manifest.json
           mv /tmp/manifest.json manifest.json
 
@@ -106,5 +136,6 @@ jobs:
           git diff --cached --quiet \
             && echo "Binaries unchanged — nothing to push." \
             && exit 0
-          git commit -m "chore: update olcrtc binaries (upstream ${{ steps.upstream.outputs.sha }})"
+          SHORT=$(echo "${{ needs.check.outputs.upstream_sha }}" | cut -c1-7)
+          git commit -m "chore: update olcrtc binaries (upstream ${SHORT})"
           git push
