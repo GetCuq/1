@@ -899,6 +899,15 @@ return view.extend({
             wrap.appendChild(cardEl);
         });
 
+        var refreshBtn = E('button', {
+            class: 'btn cbi-button cbi-button-action',
+            style: 'margin-right:8px;',
+            click: ui.createHandlerFn(this, function () {
+                if (entry.timer) { clearTimeout(entry.timer); entry.timer = null; }
+                self._refreshSubscription(entry);
+            })
+        }, 'Обновить подписку');
+
         var removeBtn = E('button', {
             class: 'btn cbi-button cbi-button-remove',
             click: ui.createHandlerFn(this, function () {
@@ -906,7 +915,7 @@ return view.extend({
             })
         }, 'Удалить подписку');
 
-        entry.blockEl.appendChild(card(null, header.concat([ wrap, E('div', { style: 'margin-top:12px;' }, [removeBtn]) ])));
+        entry.blockEl.appendChild(card(null, header.concat([ wrap, E('div', { style: 'margin-top:12px;' }, [refreshBtn, removeBtn]) ])));
     },
 
     _scheduleSubscription: function (entry) {
@@ -969,8 +978,8 @@ return view.extend({
         }
 
         callUciAdd('olcrtc', 'subscription')
-            .then(function (res) {
-                var section = res.section;
+            .then(function (section) {
+                // callUciAdd has expect:{section:''} — LuCI returns the string directly
                 return callUciSet('olcrtc', section, { url: url }).then(function () {
                     return callUciCommit('olcrtc').then(function () { return section; });
                 });
