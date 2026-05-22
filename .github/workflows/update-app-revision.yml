@@ -1,0 +1,50 @@
+name: Update app revision on push
+
+# Triggers on every push to master EXCEPT changes to files that this workflow
+# itself modifies (manifest.json, install.sh) — prevents infinite loop.
+on:
+  push:
+    branches: [master]
+    paths-ignore:
+      - 'manifest.json'
+      - 'install.sh'
+      - 'olcrtc-linux-*'
+      - '.github/**'
+
+permissions:
+  contents: write
+
+jobs:
+  update-revision:
+    name: Bump app_revision to current commit SHA
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout master
+        uses: actions/checkout@v4
+        with:
+          ref: master
+
+      - name: Update app_revision in manifest.json and install.sh
+        run: |
+          SHORT=$(git rev-parse --short HEAD)
+          echo "Setting app_revision to: $SHORT"
+
+          # Update manifest.json
+          jq --arg rev "$SHORT" '.app_revision = $rev' manifest.json > /tmp/manifest.json
+          mv /tmp/manifest.json manifest.json
+
+          # Update install.sh — replaces the APP_REVISION="..." line
+          sed -i "s|^APP_REVISION=.*|APP_REVISION=\"${SHORT}\"|" install.sh
+
+      - name: Commit and push
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add manifest.json install.sh
+          git diff --cached --quiet \
+            && echo "No revision change — nothing to push." \
+            && exit 0
+          SHORT=$(git rev-parse --short HEAD)
+          git commit -m "chore: set app_revision to ${SHORT}"
+          git push

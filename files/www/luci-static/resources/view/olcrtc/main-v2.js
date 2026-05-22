@@ -606,9 +606,16 @@ return view.extend({
         var binaryState = state.machine.arch && state.remote.binary_sha256
             ? (state.remote.binary_sha256[state.machine.arch] || '')
             : '';
-        var appUpdate = state.local.app.version !== 'unknown' && state.remote.app_version
-            ? state.local.app.version !== state.remote.app_version
-            : null;
+        // Compare by revision (auto-bumped on every push) — more reliable than version string.
+        // Fall back to version comparison if either side lacks a revision.
+        var appUpdate;
+        if (state.local.app.revision !== 'unknown' && state.remote.app_revision) {
+            appUpdate = state.local.app.revision !== state.remote.app_revision;
+        } else if (state.local.app.version !== 'unknown' && state.remote.app_version) {
+            appUpdate = state.local.app.version !== state.remote.app_version;
+        } else {
+            appUpdate = null;
+        }
         var binaryUpdate = state.local.binarySha && binaryState
             ? state.local.binarySha.toLowerCase() !== binaryState.toLowerCase()
             : null;
@@ -690,11 +697,30 @@ return view.extend({
     },
 
     _updateApp: function () {
-        return this._runShellTask('wget -qO- "' + INSTALL_URL + '" | sh', 'Панель и install.sh обновлены.');
+        // Run in background so the browser doesn't time out waiting for install.sh to finish.
+        // Log is written to /tmp/olcrtc-update.log — check there if anything goes wrong.
+        var self = this;
+        self._setUpdateBusy(true);
+        self._setUpdateStatus('Запускаю обновление в фоне...', '#5e6b76');
+        var script = '( wget -qO /tmp/_olcrtc_install.sh "' + INSTALL_URL + '" && sh /tmp/_olcrtc_install.sh ) >/tmp/olcrtc-update.log 2>&1 &';
+        return execResult('/bin/sh', [ '-c', script ], null).then(function () {
+            self._setUpdateStatus(
+                'Обновление запущено. Подождите ~30–60 сек и обновите страницу.',
+                THEME.statusGood
+            );
+        }).catch(function (err) {
+            self._setUpdateStatus('Ошибка запуска: ' + err, THEME.statusBad);
+        }).finally(function () {
+            self._setUpdateBusy(false);
+        });
     },
 
     _updateBinary: function () {
-        var script = [
+        // Run in background so the browser doesn't time out while the binary downloads.
+        var self = this;
+        self._setUpdateBusy(true);
+        self._setUpdateStatus('Запускаю обновление бинарника в фоне...', '#5e6b76');
+        var lines = [
             'arch="$(uname -m)"',
             'case "$arch" in',
             '  aarch64|arm64) url="' + REPO_RAW + '/olcrtc-linux-arm64" ;;',
@@ -705,8 +731,18 @@ return view.extend({
             'chmod 755 /usr/bin/olcrtc',
             'if command -v sha256sum >/dev/null 2>&1; then sha256sum /usr/bin/olcrtc | awk \'{print $1}\' > /etc/olcrtc/olcrtc.sha256; fi',
             '/etc/init.d/olcrtc restart'
-        ].join('\n');
-        return this._runShellTask(script, 'Бинарник olcrtc обновлён.');
+        ];
+        var script = '(\n' + lines.join('\n') + '\n) >/tmp/olcrtc-update.log 2>&1 &';
+        return execResult('/bin/sh', [ '-c', script ], null).then(function () {
+            self._setUpdateStatus(
+                'Обновление бинарника запущено. Подождите ~20–30 сек и обновите страницу.',
+                THEME.statusGood
+            );
+        }).catch(function (err) {
+            self._setUpdateStatus('Ошибка запуска: ' + err, THEME.statusBad);
+        }).finally(function () {
+            self._setUpdateBusy(false);
+        });
     },
 
     _updateUI: function (status) {
@@ -870,12 +906,16 @@ return view.extend({
         var self = this;
         entry.blockEl.innerHTML = '';
 
+        // Prefer local refresh timestamp over server-provided #update: field.
+        var updatedStr = entry.lastRefreshed
+            ? fmtDate(entry.lastRefreshed)
+            : (sub.update ? fmtDate(sub.update) : 'неизвестно');
+
         var header = [
             E('div', { style: 'font-weight:700;font-size:1.05em;margin-bottom:4px;' }, (sub.icon ? sub.icon + ' ' : '') + (sub.name || entry.url)),
             E('div', { style: 'font-size:0.82em;color:#6f7a83;margin-bottom:2px;' }, 'URL: ' + entry.url),
             E('div', { style: 'font-size:0.82em;color:#6f7a83;margin-bottom:10px;' },
-                'Обновлено: ' + (sub.update ? fmtDate(sub.update) : 'неизвестно') +
-                ' | refresh: ' + refreshLabel(sub.refresh))
+                'Обновлено: ' + updatedStr)
         ];
 
         var wrap = E('div', { style: 'display:flex;gap:10px;flex-wrap:wrap;' }, []);
@@ -903,7 +943,6 @@ return view.extend({
             class: 'btn cbi-button cbi-button-action',
             style: 'margin-right:8px;',
             click: ui.createHandlerFn(this, function () {
-                if (entry.timer) { clearTimeout(entry.timer); entry.timer = null; }
                 self._refreshSubscription(entry);
             })
         }, 'Обновить подписку');
@@ -918,14 +957,6 @@ return view.extend({
         entry.blockEl.appendChild(card(null, header.concat([ wrap, E('div', { style: 'margin-top:12px;' }, [refreshBtn, removeBtn]) ])));
     },
 
-    _scheduleSubscription: function (entry) {
-        var self = this;
-        if (entry.timer) clearTimeout(entry.timer);
-        entry.timer = setTimeout(function () {
-            self._refreshSubscription(entry);
-        }, entry.refreshMs || 10 * 60 * 1000);
-    },
-
     _refreshSubscription: function (entry) {
         var self = this;
         return self._fetchSubscription(entry.url).then(function (text) {
@@ -937,9 +968,9 @@ return view.extend({
                 ]));
                 return;
             }
-            entry.refreshMs = sub.refreshMs;
+            // Track when we last successfully refreshed (shown in UI instead of "неизвестно")
+            entry.lastRefreshed = Math.floor(Date.now() / 1000);
             self._renderSubscriptionBlock(entry, sub);
-            self._scheduleSubscription(entry);
         }).catch(function (err) {
             entry.blockEl.innerHTML = '';
             entry.blockEl.appendChild(card('Подписка', [
@@ -951,14 +982,19 @@ return view.extend({
     _createSubscription: function (sectionName, url) {
         var self = this;
         var blockEl = E('div', { style: 'margin-top:12px;' }, []);
+
+        // Show loading placeholder immediately so the block appears at once (not after async fetch)
+        blockEl.appendChild(E('div', {
+            style: THEME.softPanel + 'color:#6f7a83;'
+        }, '⏳ Загрузка подписки: ' + url));
+
         self._subsContainer.appendChild(blockEl);
 
         var entry = {
             sectionName: sectionName,
             url: url,
             blockEl: blockEl,
-            timer: null,
-            refreshMs: 10 * 60 * 1000
+            lastRefreshed: 0
         };
 
         if (!self._subscriptions) self._subscriptions = [];
