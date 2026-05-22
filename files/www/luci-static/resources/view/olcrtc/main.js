@@ -95,6 +95,9 @@ var TRANSPORT_LABELS = {
 };
 
 var LOGREAD_PATHS = [ '/sbin/logread', '/usr/sbin/logread', '/bin/logread' ];
+var REPO_RAW = 'https://raw.githubusercontent.com/GetCuq/1/master';
+var INSTALL_URL = REPO_RAW + '/install.sh';
+var MANIFEST_URL = REPO_RAW + '/manifest.json';
 
 var THEME = {
     page: 'padding:24px;background:linear-gradient(180deg,#f5f1e8 0%,#eee6d7 100%);min-height:100vh;color:#28323c;',
@@ -113,7 +116,14 @@ var THEME = {
     logs: 'background:linear-gradient(180deg,#24313b 0%,#1d2730 100%);color:#edf3f7;padding:14px;max-height:360px;overflow:auto;border-radius:14px;margin:0;border:1px solid #31404d;box-shadow:inset 0 1px 0 rgba(255,255,255,0.04);',
     serverCard: 'cursor:pointer;flex:1 1 220px;min-width:220px;max-width:320px;padding:12px;border:1px solid #ddd2c1;border-radius:14px;background:#fffaf2;box-shadow:0 8px 20px rgba(62,49,27,0.06);',
     serverCardActive: 'border-color:#2f855a;background:#eef9f0;box-shadow:0 10px 24px rgba(47,133,90,0.14);',
-    buttonGap: 'margin-left:8px;'
+    buttonGap: 'margin-left:8px;',
+    tabBar: 'display:flex;gap:10px;margin:0 0 18px 0;flex-wrap:wrap;',
+    tab: 'padding:10px 14px;border-radius:999px;border:1px solid #d9cfbf;background:#f8f2e8;color:#4d5963;font-weight:700;cursor:pointer;',
+    tabActive: 'background:#25313a;color:#fff;border-color:#25313a;',
+    updateGrid: 'display:grid;grid-template-columns:minmax(180px, 220px) 1fr;gap:10px 16px;align-items:start;',
+    codeBox: 'font-family:monospace;background:#f6eee1;padding:2px 6px;border-radius:8px;color:#5f4732;display:inline-block;',
+    softPanel: 'padding:12px 14px;border-radius:14px;background:#f8f2e8;border:1px solid #ddd1c0;',
+    warning: '#b7791f'
 };
 
 function execStdout(command, params, env) {
@@ -145,6 +155,23 @@ function removeFile(path) {
     return execResult('/bin/rm', [ '-f', path ], null).catch(function () {
         return null;
     });
+}
+
+function shortHash(str) {
+    return str ? String(str).slice(0, 12) : 'unknown';
+}
+
+function mapMachineToArch(machine) {
+    switch ((machine || '').trim()) {
+    case 'aarch64':
+    case 'arm64':
+        return 'arm64';
+    case 'x86_64':
+    case 'amd64':
+        return 'amd64';
+    default:
+        return '';
+    }
 }
 
 function pad2(n) {
@@ -481,6 +508,11 @@ return view.extend({
     _selectedServer: null,
     _matrixCells: null,
     _comboNote: null,
+    _updateInfoEl: null,
+    _updateStatusEl: null,
+    _checkUpdatesBtn: null,
+    _updateAppBtn: null,
+    _updateBinaryBtn: null,
 
     load: function () {
         return Promise.all([ uci.load('olcrtc'), getStatus() ]);
@@ -498,6 +530,173 @@ return view.extend({
         return callUciSet('olcrtc', 'config', vals)
             .then(function () { return callUciCommit('olcrtc'); })
             .catch(function (err) { console.error('[OlcRTC] UCI bulk save error:', err); });
+    },
+
+    _fetchRemoteText: function (url, extraHeaders, tmpPath) {
+        var args = [ '-q', '-O', tmpPath, '--timeout=15', '--no-check-certificate', '-U', 'olcrtc-openwrt' ];
+        (extraHeaders || []).forEach(function (header) {
+            args.push('--header=' + header);
+        });
+        args.push(url);
+
+        return execResult('/usr/bin/wget', args, null).then(function (res) {
+            if (res.code !== 0) {
+                throw new Error((res.stderr || 'wget exited with code ' + res.code).trim());
+            }
+            return readFileText(tmpPath);
+        }).finally(function () {
+            return removeFile(tmpPath);
+        });
+    },
+
+    _fetchManifest: function () {
+        return this._fetchRemoteText(MANIFEST_URL, [], '/tmp/olcrtc-manifest.json').then(function (text) {
+            return JSON.parse(text);
+        });
+    },
+
+    _getMachineArch: function () {
+        return execResult('/bin/uname', [ '-m' ], null).then(function (res) {
+            return {
+                machine: (res.stdout || '').trim(),
+                arch: mapMachineToArch(res.stdout)
+            };
+        });
+    },
+
+    _getLocalAppVersion: function () {
+        return Promise.all([
+            readFileText('/etc/olcrtc/openwrt-app-version').catch(function () { return 'unknown'; }),
+            readFileText('/etc/olcrtc/openwrt-app-revision').catch(function () { return 'unknown'; })
+        ]).then(function (vals) {
+            return {
+                version: vals[0].trim() || 'unknown',
+                revision: vals[1].trim() || 'unknown'
+            };
+        });
+    },
+
+    _getLocalBinarySha: function () {
+        return execResult('/usr/bin/sha256sum', [ '/usr/bin/olcrtc' ], null).then(function (res) {
+            if (res.code !== 0) return '';
+            return (res.stdout || '').trim().split(/\s+/)[0] || '';
+        }).catch(function () {
+            return '';
+        });
+    },
+
+    _setUpdateBusy: function (busy) {
+        if (this._checkUpdatesBtn) this._checkUpdatesBtn.disabled = !!busy;
+        if (this._updateAppBtn) this._updateAppBtn.disabled = !!busy;
+        if (this._updateBinaryBtn) this._updateBinaryBtn.disabled = !!busy;
+    },
+
+    _renderUpdateInfo: function (state) {
+        if (!this._updateInfoEl) return;
+        var binaryState = state.machine.arch && state.remote.binary_sha256
+            ? (state.remote.binary_sha256[state.machine.arch] || '')
+            : '';
+        var appUpdate = state.local.app.version !== 'unknown' && state.remote.app_version
+            ? state.local.app.version !== state.remote.app_version
+            : null;
+        var binaryUpdate = state.local.binarySha && binaryState
+            ? state.local.binarySha.toLowerCase() !== binaryState.toLowerCase()
+            : null;
+
+        this._updateInfoEl.innerHTML = '';
+        this._updateInfoEl.appendChild(E('div', { style: THEME.updateGrid }, [
+            E('div', { style: THEME.rowLabel }, 'Панель и install.sh'),
+            E('div', {}, [
+                E('div', {}, 'Текущая: '),
+                E('span', { style: THEME.codeBox }, state.local.app.version + ' / ' + state.local.app.revision),
+                E('div', { style: 'margin-top:6px;' }, 'Доступна: '),
+                E('span', { style: THEME.codeBox }, (state.remote.app_version || 'unknown') + ' / ' + (state.remote.app_revision || 'unknown')),
+                E('div', { style: 'margin-top:8px;color:' + (appUpdate ? THEME.warning : THEME.statusGood) + ';font-weight:700;' },
+                    appUpdate === null ? 'Статус неизвестен' : (appUpdate ? 'Есть обновление' : 'Актуально'))
+            ]),
+            E('div', { style: THEME.rowLabel }, 'olcrtc binary'),
+            E('div', {}, [
+                E('div', {}, 'Архитектура: ' + (state.machine.machine || 'unknown') + (state.machine.arch ? ' (' + state.machine.arch + ')' : '')),
+                E('div', { style: 'margin-top:6px;' }, 'Текущий SHA256: '),
+                E('span', { style: THEME.codeBox }, shortHash(state.local.binarySha)),
+                E('div', { style: 'margin-top:6px;' }, 'Доступный SHA256: '),
+                E('span', { style: THEME.codeBox }, shortHash(binaryState)),
+                E('div', { style: 'margin-top:8px;color:' + (binaryUpdate ? THEME.warning : THEME.statusGood) + ';font-weight:700;' },
+                    binaryUpdate === null ? 'Статус неизвестен' : (binaryUpdate ? 'Есть обновление' : 'Актуально'))
+            ])
+        ]));
+    },
+
+    _setUpdateStatus: function (text, color) {
+        if (!this._updateStatusEl) return;
+        this._updateStatusEl.textContent = text;
+        this._updateStatusEl.style.color = color || '#5e6b76';
+    },
+
+    _checkUpdates: function () {
+        var self = this;
+        self._setUpdateBusy(true);
+        self._setUpdateStatus('Проверяю версии...', '#5e6b76');
+
+        return Promise.all([
+            self._getLocalAppVersion(),
+            self._getLocalBinarySha(),
+            self._getMachineArch(),
+            self._fetchManifest()
+        ]).then(function (data) {
+            var state = {
+                local: {
+                    app: data[0],
+                    binarySha: data[1]
+                },
+                machine: data[2],
+                remote: data[3] || {}
+            };
+            self._renderUpdateInfo(state);
+            self._setUpdateStatus('Проверка завершена.', THEME.statusGood);
+        }).catch(function (err) {
+            self._setUpdateStatus('Ошибка проверки: ' + err, THEME.statusBad);
+        }).finally(function () {
+            self._setUpdateBusy(false);
+        });
+    },
+
+    _runShellTask: function (script, okMessage) {
+        var self = this;
+        self._setUpdateBusy(true);
+        self._setUpdateStatus('Выполняю обновление...', '#5e6b76');
+
+        return execResult('/bin/sh', [ '-c', script ], null).then(function (res) {
+            if (res.code !== 0) {
+                throw new Error((res.stderr || res.stdout || 'Command failed with code ' + res.code).trim());
+            }
+            self._setUpdateStatus(okMessage, THEME.statusGood);
+            return self._checkUpdates();
+        }).catch(function (err) {
+            self._setUpdateStatus('Ошибка обновления: ' + err, THEME.statusBad);
+        }).finally(function () {
+            self._setUpdateBusy(false);
+        });
+    },
+
+    _updateApp: function () {
+        return this._runShellTask('wget -qO- "' + INSTALL_URL + '" | sh', 'Панель и install.sh обновлены.');
+    },
+
+    _updateBinary: function () {
+        var script = [
+            'arch="$(uname -m)"',
+            'case "$arch" in',
+            '  aarch64|arm64) url="' + REPO_RAW + '/olcrtc-linux-arm64" ;;',
+            '  x86_64|amd64) url="' + REPO_RAW + '/olcrtc-linux-amd64" ;;',
+            '  *) echo "Unsupported architecture: $arch" >&2; exit 1 ;;',
+            'esac',
+            'wget -q -O /usr/bin/olcrtc "$url"',
+            'chmod 755 /usr/bin/olcrtc',
+            'if command -v sha256sum >/dev/null 2>&1; then sha256sum /usr/bin/olcrtc | awk \'{print $1}\' > /etc/olcrtc/olcrtc.sha256; fi',
+            '/etc/init.d/olcrtc restart'
+        ].join('; ');
+        return this._runShellTask(script, 'Бинарник olcrtc обновлён.');
     },
 
     _updateUI: function (status) {
@@ -593,6 +792,7 @@ return view.extend({
             dns: uci.get('olcrtc', 'config', 'dns') || '1.1.1.1:53',
             data_dir: uci.get('olcrtc', 'config', 'data_dir') || '/var/lib/olcrtc',
             debug: uci.get('olcrtc', 'config', 'debug') || '0',
+            auto_reconnect: uci.get('olcrtc', 'config', 'auto_reconnect') || '1',
             vp8_fps: uci.get('olcrtc', 'config', 'vp8_fps') || '60',
             vp8_batch: uci.get('olcrtc', 'config', 'vp8_batch') || '64',
             sei_fps: uci.get('olcrtc', 'config', 'sei_fps') || '60',
@@ -648,20 +848,10 @@ return view.extend({
 
     _fetchSubscription: function (url) {
         var hwid = uci.get('olcrtc', 'config', 'hwid') || '';
-        var tmpPath = '/tmp/olcrtc-subscription.txt';
-        var args = [ '-q', '-O', tmpPath, '--timeout=15', '--no-check-certificate', '-U', 'olcrtc-openwrt' ];
-        if (hwid) args.push('--header=X-HWID: ' + hwid);
-        args.push(url);
-        return execResult('/usr/bin/wget', args, null).then(function (res) {
-            if (res.code !== 0) {
-                throw new Error((res.stderr || 'wget exited with code ' + res.code).trim());
-            }
-            return readFileText(tmpPath);
-        }).then(function (text) {
+        var headers = hwid ? [ 'X-HWID: ' + hwid ] : [];
+        return this._fetchRemoteText(url, headers, '/tmp/olcrtc-subscription.txt').then(function (text) {
             if (!text.trim()) throw new Error('Пустой ответ от сервера');
             return text;
-        }).finally(function () {
-            return removeFile(tmpPath);
         });
     },
 
@@ -855,11 +1045,24 @@ return view.extend({
         self._stopBtn = stopBtn;
         self._updateUI(status);
 
+        var autoReconnectCheck = E('input', {
+            type: 'checkbox',
+            checked: cfg.auto_reconnect === '1' ? 'checked' : null,
+            change: function (ev) {
+                self._saveField('auto_reconnect', ev.target.checked ? '1' : '0');
+            }
+        });
+
         var statusCard = card('Сервис', [
             statusEl,
             E('div', { style: 'font-size:0.85em;color:#57606a;margin-bottom:12px;' },
                 'Сервис запускает universal-carrier через YAML: /etc/olcrtc/client.yaml'),
-            E('div', {}, [ startBtn, stopBtn ])
+            E('div', {}, [ startBtn, stopBtn ]),
+            E('div', { style: 'margin-top:14px;' }, [
+                row('Автопереподключение', 'Если клиент оборвётся, сервис сам поднимет его заново. Для полностью ручного режима можно отключить.', E('label', {
+                    style: 'display:flex;gap:8px;align-items:center;'
+                }, [ autoReconnectCheck, E('span', {}, 'Включено') ]))
+            ])
         ]);
 
         var uriHint = E('div', { style: 'font-size:0.82em;color:#6f7a83;margin-top:6px;' },
@@ -1126,6 +1329,36 @@ return view.extend({
         self._logsEl = logsEl;
         var logsCard = card('Логи', [ logsEl ]);
 
+        var updateInfoEl = E('div', { style: THEME.softPanel }, 'Нажми "Проверить обновление", чтобы увидеть локальную и удалённую версии.');
+        var updateStatusEl = E('div', { style: 'margin-top:12px;color:#5e6b76;' }, 'Ожидает проверки.');
+        var checkUpdatesBtn = E('button', {
+            class: 'btn cbi-button cbi-button-action',
+            click: ui.createHandlerFn(this, function () { return self._checkUpdates(); })
+        }, 'Проверить обновление');
+        var updateAppBtn = E('button', {
+            class: 'btn cbi-button',
+            style: THEME.buttonGap,
+            click: ui.createHandlerFn(this, function () { return self._updateApp(); })
+        }, 'Обновить панель');
+        var updateBinaryBtn = E('button', {
+            class: 'btn cbi-button',
+            style: THEME.buttonGap,
+            click: ui.createHandlerFn(this, function () { return self._updateBinary(); })
+        }, 'Обновить olcrtc');
+
+        self._updateInfoEl = updateInfoEl;
+        self._updateStatusEl = updateStatusEl;
+        self._checkUpdatesBtn = checkUpdatesBtn;
+        self._updateAppBtn = updateAppBtn;
+        self._updateBinaryBtn = updateBinaryBtn;
+
+        var updateCard = card('Обновление', [
+            E('div', { style: THEME.rowDesc + 'margin-bottom:12px;' }, 'Проверка обновлений не пишет ничего в flash. Обновление панели перекачивает LuCI-файлы и install.sh, а обновление olcrtc заменяет только бинарник и перезапускает сервис.'),
+            updateInfoEl,
+            updateStatusEl,
+            E('div', { style: 'margin-top:14px;' }, [ checkUpdatesBtn, updateAppBtn, updateBinaryBtn ])
+        ]);
+
         self._updateTransportVisibility(cfg.transport);
         self._updateMatrix(cfg.auth_provider, cfg.transport);
         self._startPolling();
@@ -1142,11 +1375,28 @@ return view.extend({
             return E('div', { style: 'flex:' + width + ';min-width:280px;' }, [ node ]);
         }
 
+        var settingsAnchor = E('div', {});
+        var updateAnchor = E('div', {});
+        var settingsTab = E('button', {
+            style: THEME.tab + THEME.tabActive,
+            click: function () { settingsAnchor.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+        }, 'Настройки');
+        var updatesTab = E('button', {
+            style: THEME.tab,
+            click: function () {
+                updateAnchor.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                self._checkUpdates();
+            }
+        }, 'Обновление');
+
+        setTimeout(function () { self._checkUpdates(); }, 0);
         return E('div', { style: THEME.page }, [
             E('div', { style: 'margin-bottom:18px;' }, [
                 E('h2', { style: THEME.heroTitle }, 'OlcRTC OpenWrt'),
                 E('div', { style: 'color:#57606a;' }, 'LuCI-панель для ветки universal-carrier: provider + transport + YAML runtime')
             ]),
+            settingsAnchor,
+            E('div', { style: THEME.tabBar }, [ settingsTab, updatesTab ]),
             flex([
                 col(1, statusCard),
                 col(2, uriCard)
@@ -1160,7 +1410,9 @@ return view.extend({
                 col(1, transportCard),
                 col(1, advancedCard)
             ]),
-            logsCard
+            logsCard,
+            updateAnchor,
+            updateCard
         ]);
     },
 

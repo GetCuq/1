@@ -3,10 +3,15 @@
 set -e
 
 REPO_RAW="https://raw.githubusercontent.com/GetCuq/1/master"
+APP_VERSION="2026.05.22.1"
+APP_REVISION="2026-05-22-ui-update"
 BINARY_ARM64_URL="${REPO_RAW}/olcrtc-linux-arm64"
 BINARY_AMD64_URL="${REPO_RAW}/olcrtc-linux-amd64"
 BINARY_DST="/usr/bin/olcrtc"
 CONFIG_DIR="/etc/olcrtc"
+APP_VERSION_FILE="${CONFIG_DIR}/openwrt-app-version"
+APP_REVISION_FILE="${CONFIG_DIR}/openwrt-app-revision"
+BINARY_SHA_FILE="${CONFIG_DIR}/olcrtc.sha256"
 INITD="/etc/init.d/olcrtc"
 UCI_CONF="/etc/config/olcrtc"
 LUCI_MENU="/usr/share/luci/menu.d/luci-app-olcrtc.json"
@@ -95,6 +100,11 @@ else
 fi
 
 mkdir -p "$CONFIG_DIR"
+printf '%s\n' "$APP_VERSION" > "$APP_VERSION_FILE"
+printf '%s\n' "$APP_REVISION" > "$APP_REVISION_FILE"
+if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$BINARY_DST" | awk '{print $1}' > "$BINARY_SHA_FILE"
+fi
 
 HWID_CUR="$(uci get olcrtc.config.hwid 2>/dev/null || true)"
 if [ -z "$HWID_CUR" ]; then

@@ -169,7 +169,7 @@ write_yaml_config() {
 
 start_service() {
     local auth_provider transport room_id key
-    local socks_host socks_port socks_user socks_pass dns data_dir debug ffmpeg_bin
+    local socks_host socks_port socks_user socks_pass dns data_dir debug ffmpeg_bin auto_reconnect
     local vp8_fps vp8_batch
     local sei_fps sei_batch sei_frag sei_ack_ms
     local video_codec video_w video_h video_fps video_bitrate video_hw
@@ -187,6 +187,7 @@ start_service() {
     config_get dns                config dns                '1.1.1.1:53'
     config_get data_dir           config data_dir           '/var/lib/olcrtc'
     config_get debug              config debug              '0'
+    config_get auto_reconnect     config auto_reconnect     '1'
     config_get ffmpeg_bin         config ffmpeg             'ffmpeg'
     config_get vp8_fps            config vp8_fps            '60'
     config_get vp8_batch          config vp8_batch          '64'
@@ -222,7 +223,7 @@ start_service() {
 
     procd_open_instance
     procd_set_param command "$BINARY" "$CONFIG_PATH"
-    procd_set_param respawn 3600 5 0
+    [ "$auto_reconnect" = "1" ] && procd_set_param respawn 3600 5 0
     procd_set_param stdout 1
     procd_set_param stderr 1
     procd_close_instance
