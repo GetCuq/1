@@ -705,7 +705,7 @@ return view.extend({
             'chmod 755 /usr/bin/olcrtc',
             'if command -v sha256sum >/dev/null 2>&1; then sha256sum /usr/bin/olcrtc | awk \'{print $1}\' > /etc/olcrtc/olcrtc.sha256; fi',
             '/etc/init.d/olcrtc restart'
-        ].join('; ');
+        ].join('\n');
         return this._runShellTask(script, 'Бинарник olcrtc обновлён.');
     },
 
