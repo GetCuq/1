@@ -645,10 +645,14 @@ return view.extend({
             appUpdate = null;
         }
 
-        // OlcRTC binary: compare by binary_revision if available, else SHA256
+        // OlcRTC binary: compare by binary_revision if available, else SHA256.
+        // Normalise to 7 chars — install.sh stores short SHA, autoupdate may store full SHA,
+        // manifest always stores short SHA (after CI fix). startsWith comparison is robust.
         var binaryUpdate;
         if (state.local.binaryRevision && state.remote.binary_revision) {
-            binaryUpdate = state.local.binaryRevision !== state.remote.binary_revision;
+            var localRev  = String(state.local.binaryRevision).slice(0, 7);
+            var remoteRev = String(state.remote.binary_revision).slice(0, 7);
+            binaryUpdate = localRev !== remoteRev;
         } else if (state.local.binarySha && binaryState) {
             binaryUpdate = state.local.binarySha.toLowerCase() !== binaryState.toLowerCase();
         } else {
@@ -786,18 +790,28 @@ return view.extend({
             'arch="$(uname -m)"',
             'case "$arch" in',
             '  aarch64|arm64) url="' + REPO_RAW + '/olcrtc-linux-arm64" ;;',
-            '  x86_64|amd64) url="' + REPO_RAW + '/olcrtc-linux-amd64" ;;',
-            '  *) echo "Unsupported architecture: $arch" >&2; exit 1 ;;',
+            '  x86_64|amd64)  url="' + REPO_RAW + '/olcrtc-linux-amd64" ;;',
+            '  *) echo "Unsupported arch: $arch" >&2; exit 1 ;;',
             'esac',
-            'wget -q -O /usr/bin/olcrtc "$url"',
-            'chmod 755 /usr/bin/olcrtc',
+            // Download to temp file first — atomic replace prevents corrupted binary on error
+            'wget -q --timeout=60 --no-check-certificate -O /tmp/olcrtc.new "$url" || { rm -f /tmp/olcrtc.new; echo "Download failed" >&2; exit 1; }',
+            'chmod 755 /tmp/olcrtc.new',
+            'mv /tmp/olcrtc.new /usr/bin/olcrtc',
+            // Save SHA256 for future update checks
             'if command -v sha256sum >/dev/null 2>&1; then sha256sum /usr/bin/olcrtc | awk \'{print $1}\' > /etc/olcrtc/olcrtc.sha256; fi',
-            '/etc/init.d/olcrtc restart'
+            // Fetch manifest and save binary_revision so the next check shows "up to date"
+            'manifest=$(wget -qO- --timeout=15 --no-check-certificate "' + MANIFEST_URL + '" 2>/dev/null)',
+            'if [ -n "$manifest" ]; then',
+            '  rev=$(printf \'%s\' "$manifest" | grep \'"binary_revision"\' | grep -o \'"[a-f0-9]*"\' | tr -d \'"\')',
+            '  [ -n "$rev" ] && printf \'%s\\n\' "$rev" > /etc/olcrtc/binary-revision',
+            'fi',
+            // Restart only if the service was already running — don't start it if user stopped it
+            'if pidof olcrtc >/dev/null 2>&1; then /etc/init.d/olcrtc restart 2>/dev/null; fi'
         ];
         var script = '(\n' + lines.join('\n') + '\n) >/tmp/olcrtc-update.log 2>&1 &';
         return execResult('/bin/sh', [ '-c', script ], null).then(function () {
             self._setUpdateStatus(
-                'Обновление бинарника запущено. Подождите ~20–30 сек и обновите страницу.',
+                'Обновление бинарника запущено. Подождите ~30 сек и нажмите "Проверить обновления".',
                 THEME.statusGood
             );
         }).catch(function (err) {

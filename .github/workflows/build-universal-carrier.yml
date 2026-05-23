@@ -127,12 +127,12 @@ jobs:
 
           jq --arg arm64 "$ARM64" \
              --arg amd64 "$AMD64" \
-             --arg rev   "$REV"   \
+             --arg short "$SHORT"  \
              --arg date  "$DATE"  \
             '
               .binary_sha256.arm64 = $arm64 |
               .binary_sha256.amd64 = $amd64 |
-              .binary_revision     = $rev   |
+              .binary_revision     = $short  |
               .binary_date         = $date
             ' manifest.json > /tmp/manifest.json
           mv /tmp/manifest.json manifest.json
