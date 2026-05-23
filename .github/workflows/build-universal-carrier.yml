@@ -32,8 +32,13 @@ jobs:
         run: |
           UPSTREAM_SHA=$(git ls-remote \
             https://github.com/openlibrecommunity/olcrtc.git \
-            refs/heads/refactor/universal-carrier \
+            refs/heads/master \
             | awk '{print $1}')
+
+          if [ -z "$UPSTREAM_SHA" ]; then
+            echo "Failed to resolve upstream master SHA" >&2
+            exit 1
+          fi
 
           STORED_REV=$(jq -r '.binary_revision // ""' manifest.json)
 
@@ -63,12 +68,13 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: openlibrecommunity/olcrtc
-          ref: refactor/universal-carrier
+          ref: master
+          submodules: recursive
 
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: "1.25.x"
           check-latest: true
 
       - name: Build
