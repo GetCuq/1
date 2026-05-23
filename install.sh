@@ -92,7 +92,9 @@ chmod 755 "$BINARY_DST"
 info "Installing init script..."
 wget -q -O "$INITD" "${REPO_RAW}/files/etc/init.d/olcrtc" || error "Failed to download init script"
 chmod 755 "$INITD"
-"$INITD" enable
+# Do NOT auto-enable at boot here. User controls start/stop from the UI.
+# On upgrade: if service was previously enabled, the /etc/rc.d/ symlink already exists — preserve it.
+# On fresh install: no symlink → service won't start at boot until user clicks Start in UI.
 
 if [ ! -f "$UCI_CONF" ]; then
     info "Creating UCI config..."
@@ -137,7 +139,6 @@ wget -q -O /usr/bin/olcrtc-autoupdate "${REPO_RAW}/files/usr/bin/olcrtc-autoupda
 chmod 755 /usr/bin/olcrtc-autoupdate
 
 # Ensure new UCI options exist (no-op on fresh install, safe on upgrade)
-uci -q get olcrtc.config.enabled              >/dev/null 2>&1 || uci set olcrtc.config.enabled='0'
 uci -q get olcrtc.config.auto_update          >/dev/null 2>&1 || uci set olcrtc.config.auto_update='0'
 uci -q get olcrtc.config.auto_update_interval >/dev/null 2>&1 || uci set olcrtc.config.auto_update_interval='24'
 uci commit olcrtc

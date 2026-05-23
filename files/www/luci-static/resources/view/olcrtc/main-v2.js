@@ -897,15 +897,16 @@ return view.extend({
 
     _runAction: function (action) {
         var self = this;
-        // Persist user intent: enabled=1 on start, enabled=0 on stop.
-        // init.d and cron use this flag to prevent auto-starting a deliberately-stopped service.
-        var enabledVal = action === 'start' ? '1' : action === 'stop' ? '0' : null;
-        var setFlag = enabledVal !== null
-            ? callUciSet('olcrtc', 'config', { enabled: enabledVal })
-                .then(function () { return callUciCommit('olcrtc'); })
-            : Promise.resolve();
-        return setFlag
+        // Use OpenWrt's native enable/disable mechanism (symlinks in /etc/rc.d/).
+        // start → enable first (so service auto-starts after reboot too), then start.
+        // stop  → stop first, then disable (removes rc.d symlink → won't start at boot).
+        // This prevents the service from auto-starting if the user deliberately stopped it,
+        // while reload_service (triggered by UCI changes) uses pidof to avoid waking it.
+        var pre  = action === 'start' ? callInitAction('olcrtc', 'enable')  : Promise.resolve();
+        var post = action === 'stop'  ? callInitAction('olcrtc', 'disable') : Promise.resolve();
+        return pre
             .then(function () { return callInitAction('olcrtc', action); })
+            .then(function () { return post; })
             .then(function () { return ui.showModal(null, [ E('p', {}, 'Команда отправлена: ' + action) ]); })
             .then(function () { setTimeout(function () { ui.hideModal(); }, 700); })
             .then(function () { return getStatus(); })
