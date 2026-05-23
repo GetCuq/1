@@ -137,6 +137,7 @@ wget -q -O /usr/bin/olcrtc-autoupdate "${REPO_RAW}/files/usr/bin/olcrtc-autoupda
 chmod 755 /usr/bin/olcrtc-autoupdate
 
 # Ensure new UCI options exist (no-op on fresh install, safe on upgrade)
+uci -q get olcrtc.config.enabled              >/dev/null 2>&1 || uci set olcrtc.config.enabled='0'
 uci -q get olcrtc.config.auto_update          >/dev/null 2>&1 || uci set olcrtc.config.auto_update='0'
 uci -q get olcrtc.config.auto_update_interval >/dev/null 2>&1 || uci set olcrtc.config.auto_update_interval='24'
 uci commit olcrtc

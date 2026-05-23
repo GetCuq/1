@@ -168,7 +168,7 @@ write_yaml_config() {
 }
 
 start_service() {
-    local auth_provider transport room_id key
+    local enabled auth_provider transport room_id key
     local socks_host socks_port socks_user socks_pass dns data_dir debug ffmpeg_bin auto_reconnect
     local vp8_fps vp8_batch
     local sei_fps sei_batch sei_frag sei_ack_ms
@@ -176,6 +176,11 @@ start_service() {
     local video_qr_recovery video_qr_size video_tile_module video_tile_rs
 
     config_load olcrtc
+    config_get enabled config enabled '0'
+    [ "$enabled" = "1" ] || {
+        logger -t "$LOGTAG" "not starting: enabled=0 (user has not started the service)"
+        return 1
+    }
     config_get auth_provider      config auth_provider      'jitsi'
     config_get transport          config transport          'datachannel'
     config_get room_id            config room_id            ''
@@ -276,7 +281,12 @@ service_triggers() {
 }
 
 reload_service() {
+    local enabled
+    config_load olcrtc
+    config_get enabled config enabled '0'
     setup_cron
     stop
-    start
+    # Only restart if user explicitly enabled the service.
+    # This prevents UCI config saves from starting a deliberately-stopped service.
+    [ "$enabled" = "1" ] && start
 }
