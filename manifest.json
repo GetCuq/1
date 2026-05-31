@@ -2,10 +2,10 @@
   "channel": "stable",
   "app_version": "2026.05.22.1",
   "app_revision": "9701797",
-  "binary_revision": "9f96925",
+  "binary_revision": "08e03d0",
   "binary_date": "2026.05.31",
   "binary_sha256": {
-    "arm64": "013f570a45ccca7f0a3c845ebe2f742cdac5c1aa3fcb93f05bd8263b21e4eea4",
-    "amd64": "9703b4caab4fb5da8951d8c2494de54d36c633d2455b976334b9fd136d07a070"
+    "arm64": "1b06f37ab8d8cc390282d2c4fc448db1eedf8b546d5a53b3a3ccc165a3afbfe0",
+    "amd64": "1e570102570bdfb7fed3daceb31f83df0530677096819f01cb7056926306f560"
   }
 }
