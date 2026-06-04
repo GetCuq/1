@@ -237,7 +237,7 @@ clear_pbr() {
 
 # Build (or rebuild) the policy routing for the configured egress interface.
 apply_pbr() {
-    local wan_if uid DROP_RULE
+    local wan_if uid DROP_RULE NAT_CHAIN
 
     config_load olcrtc
     config_get wan_if config wan_interface ''
@@ -273,26 +273,37 @@ apply_pbr() {
         # Up: drop anything from olcrtc that would leave via any device other
         # than the chosen egress (loopback stays allowed for the local SOCKS).
         DROP_RULE="meta skuid ${uid} oifname != \"${IFACE_DEV}\" oifname != \"lo\" drop"
+        # Source address is picked at connect() time (before the mark exists),
+        # so it is the wrong (main) IP. Masquerade on egress rewrites it to the
+        # interface address; otherwise the upstream drops the foreign source.
+        NAT_CHAIN="    chain nat_out {
+        type nat hook postrouting priority srcnat; policy accept;
+        meta skuid ${uid} oifname \"${IFACE_DEV}\" masquerade
+    }"
         logger -t "$LOGTAG" "pbr: olcrtc(uid=$uid) -> table $RT_TABLE via ${IFACE_DEV}${IFACE_GW:+ gw $IFACE_GW} (iface $wan_if)"
     else
         # Down: drop all non-loopback olcrtc traffic (kill-switch, no leak).
         DROP_RULE="meta skuid ${uid} oifname != \"lo\" drop"
+        NAT_CHAIN=""
         logger -t "$LOGTAG" "pbr: interface '$wan_if' down; olcrtc traffic dropped (kill-switch) until it comes up"
     fi
 
-    # Mark olcrtc's traffic (for routing) and enforce the kill-switch in nft, so
-    # we don't depend on `ip route blackhole` support in busybox.
+    # Mark olcrtc's traffic for routing. Use a high priority so our mark is the
+    # last one written before the routing decision — Podkop/fw4 restore connmark
+    # in OUTPUT and would otherwise clobber it. The kill-switch runs after the
+    # mark chain (and thus after the re-route) so it sees the final oif.
     nft delete table inet "$NFT_TABLE_NAME" 2>/dev/null
     nft -f - <<EOF
 table inet ${NFT_TABLE_NAME} {
     chain mark_output {
-        type route hook output priority mangle; policy accept;
+        type route hook output priority 300; policy accept;
         meta skuid ${uid} meta mark set ${FW_MARK}
     }
     chain killswitch {
-        type filter hook output priority 0; policy accept;
+        type filter hook output priority 350; policy accept;
         ${DROP_RULE}
     }
+${NAT_CHAIN}
 }
 EOF
 }
