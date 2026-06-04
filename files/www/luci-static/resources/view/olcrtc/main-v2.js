@@ -521,7 +521,7 @@ return view.extend({
     _lastCheckState: null,
 
     load: function () {
-        return Promise.all([ uci.load('olcrtc'), getStatus(), uci.load('network') ]);
+        return Promise.all([ uci.load('olcrtc'), getStatus() ]);
     },
 
     _saveField: function (key, value) {
@@ -964,7 +964,6 @@ return view.extend({
             socks_user: uci.get('olcrtc', 'config', 'socks_user') || '',
             socks_pass: uci.get('olcrtc', 'config', 'socks_pass') || '',
             dns: uci.get('olcrtc', 'config', 'dns') || '1.1.1.1:53',
-            wan_interface: uci.get('olcrtc', 'config', 'wan_interface') || '',
             data_dir: uci.get('olcrtc', 'config', 'data_dir') || '/var/lib/olcrtc',
             debug: uci.get('olcrtc', 'config', 'debug') || '0',
             auto_reconnect: uci.get('olcrtc', 'config', 'auto_reconnect') || '1',
@@ -1429,25 +1428,6 @@ return view.extend({
         ]);
 
         var dnsInput = textInput('dns', cfg.dns, '1.1.1.1:53');
-
-        var wanIfaceOptions = [
-            E('option', { value: '', selected: !cfg.wan_interface ? '' : null }, 'По умолчанию (маршрут роутера)')
-        ];
-        (uci.sections('network', 'interface') || []).forEach(function (s) {
-            var name = s['.name'];
-            if (!name || name === 'loopback') return;
-            var label = name + (s.proto ? ' (' + s.proto + ')' : '');
-            wanIfaceOptions.push(E('option', {
-                value: name,
-                selected: cfg.wan_interface === name ? '' : null
-            }, label));
-        });
-        var wanIfaceSel = E('select', {
-            class: 'cbi-input-select',
-            style: THEME.inputSelect,
-            change: function (ev) { self._saveField('wan_interface', ev.target.value); }
-        }, wanIfaceOptions);
-
         var dataDirInput = textInput('data_dir', cfg.data_dir, '/var/lib/olcrtc');
         var ffmpegInput = textInput('ffmpeg', cfg.ffmpeg, 'ffmpeg');
         var debugCheck = E('input', {
@@ -1460,7 +1440,6 @@ return view.extend({
 
         var advancedCard = card('Runtime', [
             row('DNS', 'Записывается в net.dns.', dnsInput),
-            row('Egress-интерфейс', 'Через какой интерфейс olcrtc выходит в интернет (напр. wwan — телефон по Wi-Fi). «По умолчанию» — обычный маршрут роутера. При выборе интерфейса olcrtc запускается под отдельным пользователем, а его трафик через fwmark идёт только в эту таблицу маршрутизации. Это kill-switch: если интерфейс не поднят, трафик olcrtc дропается, а не утекает в обычный канал.', wanIfaceSel),
             row('Data dir', 'Путь для top-level data: в YAML.', dataDirInput),
             row('ffmpeg', 'Top-level ffmpeg path для videochannel.', ffmpegInput),
             row('Debug', 'Включает подробные логи.', E('label', { style: 'display:flex;gap:8px;align-items:center;' }, [ debugCheck, E('span', {}, 'debug: true') ]))
