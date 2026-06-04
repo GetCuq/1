@@ -369,13 +369,13 @@ start_service() {
     logger -t "$LOGTAG" "starting client: provider=$auth_provider transport=$transport socks=${socks_host}:${socks_port}${wan_interface:+ egress=$wan_interface}"
 
     procd_open_instance
+    procd_set_param command "$BINARY" "$CONFIG_PATH"
+    # Drop privileges to the dedicated user so its traffic can be matched by
+    # UID. (busybox has no `su`, so we rely on procd's user/group params; they
+    # work now that ensure_user reliably creates the account.)
     if [ -n "$wan_interface" ]; then
-        # Drop privileges via `su` rather than procd's `user` param, which is
-        # not honoured on all procd versions (was silently ignored -> ran as
-        # root, so the UID-based fwmark never matched).
-        procd_set_param command /bin/su -s /bin/sh -c "exec $BINARY $CONFIG_PATH" "$OLCRTC_USER"
-    else
-        procd_set_param command "$BINARY" "$CONFIG_PATH"
+        procd_set_param user "$OLCRTC_USER"
+        procd_set_param group "$OLCRTC_GROUP"
     fi
     [ "$auto_reconnect" = "1" ] && procd_set_param respawn 3600 5 0
     procd_set_param stdout 1
