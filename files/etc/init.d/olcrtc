@@ -19,9 +19,10 @@ OLCRTC_USER="olcrtc"
 OLCRTC_UID="8377"
 OLCRTC_GROUP="olcrtc"
 OLCRTC_GID="8377"
-# Routing table / fwmark / rule priority. Chosen to avoid clashing with
-# common Podkop / sing-box values (which use small marks and tables ~100/2022).
-RT_TABLE="4943"
+# Routing table / fwmark / rule priority. The table id is kept <= 255 because
+# busybox's `ip` only supports the legacy 8-bit table field. Chosen to avoid
+# clashing with common Podkop defaults.
+RT_TABLE="194"
 FW_MARK="0x4f43"
 RULE_PRIO="30000"
 NFT_TABLE_NAME="olcrtc"
@@ -187,9 +188,11 @@ write_yaml_config() {
 # Create the dedicated unprivileged user/group (idempotent).
 ensure_user() {
     if ! grep -q "^${OLCRTC_GROUP}:" /etc/group 2>/dev/null; then
+        [ -n "$(tail -c1 /etc/group 2>/dev/null)" ] && echo >> /etc/group
         echo "${OLCRTC_GROUP}:x:${OLCRTC_GID}:" >> /etc/group
     fi
     if ! grep -q "^${OLCRTC_USER}:" /etc/passwd 2>/dev/null; then
+        [ -n "$(tail -c1 /etc/passwd 2>/dev/null)" ] && echo >> /etc/passwd
         echo "${OLCRTC_USER}:x:${OLCRTC_UID}:${OLCRTC_GID}:olcrtc:/var/lib/olcrtc:/bin/false" >> /etc/passwd
     fi
 }
@@ -234,7 +237,7 @@ clear_pbr() {
 
 # Build (or rebuild) the policy routing for the configured egress interface.
 apply_pbr() {
-    local wan_if uid
+    local wan_if uid DROP_RULE
 
     config_load olcrtc
     config_get wan_if config wan_interface ''
@@ -253,22 +256,12 @@ apply_pbr() {
     uid="$(id -u "$OLCRTC_USER" 2>/dev/null)" || uid="$OLCRTC_UID"
     [ -n "$uid" ] || uid="$OLCRTC_UID"
 
-    # Kill-switch: always install the mark + rule + nft chain so olcrtc traffic
-    # is *only* ever routed through the dedicated table — it must never fall back
-    # to the router's default route.
+    # Policy rule: marked packets look up the dedicated table (before main).
     ip rule del fwmark "$FW_MARK" lookup "$RT_TABLE" 2>/dev/null
     ip rule add fwmark "$FW_MARK" lookup "$RT_TABLE" priority "$RULE_PRIO"
 
-    nft delete table inet "$NFT_TABLE_NAME" 2>/dev/null
-    nft -f - <<EOF
-table inet ${NFT_TABLE_NAME} {
-    chain mark_output {
-        type route hook output priority mangle; policy accept;
-        meta skuid ${uid} meta mark set ${FW_MARK}
-    }
-}
-EOF
-
+    # Default route in the dedicated table + the kill-switch drop rule both
+    # depend on whether the egress interface is up right now.
     ip route flush table "$RT_TABLE" 2>/dev/null
     if resolve_iface "$wan_if"; then
         if [ -n "$IFACE_GW" ]; then
@@ -277,13 +270,31 @@ EOF
         else
             ip route replace default dev "$IFACE_DEV" table "$RT_TABLE"
         fi
+        # Up: drop anything from olcrtc that would leave via any device other
+        # than the chosen egress (loopback stays allowed for the local SOCKS).
+        DROP_RULE="meta skuid ${uid} oifname != \"${IFACE_DEV}\" oifname != \"lo\" drop"
         logger -t "$LOGTAG" "pbr: olcrtc(uid=$uid) -> table $RT_TABLE via ${IFACE_DEV}${IFACE_GW:+ gw $IFACE_GW} (iface $wan_if)"
     else
-        # Interface not up yet: blackhole marked traffic instead of letting it
-        # leak out the default route. Hotplug installs the real route on ifup.
-        ip route replace blackhole default table "$RT_TABLE"
-        logger -t "$LOGTAG" "pbr: interface '$wan_if' down; olcrtc traffic blackholed until it comes up"
+        # Down: drop all non-loopback olcrtc traffic (kill-switch, no leak).
+        DROP_RULE="meta skuid ${uid} oifname != \"lo\" drop"
+        logger -t "$LOGTAG" "pbr: interface '$wan_if' down; olcrtc traffic dropped (kill-switch) until it comes up"
     fi
+
+    # Mark olcrtc's traffic (for routing) and enforce the kill-switch in nft, so
+    # we don't depend on `ip route blackhole` support in busybox.
+    nft delete table inet "$NFT_TABLE_NAME" 2>/dev/null
+    nft -f - <<EOF
+table inet ${NFT_TABLE_NAME} {
+    chain mark_output {
+        type route hook output priority mangle; policy accept;
+        meta skuid ${uid} meta mark set ${FW_MARK}
+    }
+    chain killswitch {
+        type filter hook output priority 0; policy accept;
+        ${DROP_RULE}
+    }
+}
+EOF
 }
 
 # rc extra command, also invoked from the hotplug helper.
@@ -358,8 +369,14 @@ start_service() {
     logger -t "$LOGTAG" "starting client: provider=$auth_provider transport=$transport socks=${socks_host}:${socks_port}${wan_interface:+ egress=$wan_interface}"
 
     procd_open_instance
-    procd_set_param command "$BINARY" "$CONFIG_PATH"
-    [ -n "$wan_interface" ] && procd_set_param user "$OLCRTC_USER"
+    if [ -n "$wan_interface" ]; then
+        # Drop privileges via `su` rather than procd's `user` param, which is
+        # not honoured on all procd versions (was silently ignored -> ran as
+        # root, so the UID-based fwmark never matched).
+        procd_set_param command /bin/su -s /bin/sh -c "exec $BINARY $CONFIG_PATH" "$OLCRTC_USER"
+    else
+        procd_set_param command "$BINARY" "$CONFIG_PATH"
+    fi
     [ "$auto_reconnect" = "1" ] && procd_set_param respawn 3600 5 0
     procd_set_param stdout 1
     procd_set_param stderr 1
