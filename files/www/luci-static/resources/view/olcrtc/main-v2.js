@@ -1460,7 +1460,7 @@ return view.extend({
 
         var advancedCard = card('Runtime', [
             row('DNS', 'Записывается в net.dns.', dnsInput),
-            row('Egress-интерфейс', 'Через какой интерфейс olcrtc выходит в интернет (напр. wwan — телефон по Wi-Fi). «По умолчанию» — обычный маршрут роутера. При выборе интерфейса olcrtc запускается под отдельным пользователем, а его трафик через fwmark направляется в отдельную таблицу маршрутизации (применяется после Start/Restart).', wanIfaceSel),
+            row('Egress-интерфейс', 'Через какой интерфейс olcrtc выходит в интернет (напр. wwan — телефон по Wi-Fi). «По умолчанию» — обычный маршрут роутера. При выборе интерфейса olcrtc запускается под отдельным пользователем, а его трафик через fwmark идёт только в эту таблицу маршрутизации. Это kill-switch: если интерфейс не поднят, трафик olcrtc дропается, а не утекает в обычный канал.', wanIfaceSel),
             row('Data dir', 'Путь для top-level data: в YAML.', dataDirInput),
             row('ffmpeg', 'Top-level ffmpeg path для videochannel.', ffmpegInput),
             row('Debug', 'Включает подробные логи.', E('label', { style: 'display:flex;gap:8px;align-items:center;' }, [ debugCheck, E('span', {}, 'debug: true') ]))
