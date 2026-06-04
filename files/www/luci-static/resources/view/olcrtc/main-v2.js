@@ -1460,7 +1460,7 @@ return view.extend({
 
         var advancedCard = card('Runtime', [
             row('DNS', 'Записывается в net.dns.', dnsInput),
-            row('Egress-интерфейс', 'Через какой интерфейс olcrtc выходит в интернет (напр. wwan — телефон по Wi-Fi). «По умолчанию» — обычный маршрут роутера. Пока только сохраняется в UCI (wan_interface); авто-настройка маршрутов будет добавлена отдельным шагом.', wanIfaceSel),
+            row('Egress-интерфейс', 'Через какой интерфейс olcrtc выходит в интернет (напр. wwan — телефон по Wi-Fi). «По умолчанию» — обычный маршрут роутера. При выборе интерфейса olcrtc запускается под отдельным пользователем, а его трафик через fwmark направляется в отдельную таблицу маршрутизации (применяется после Start/Restart).', wanIfaceSel),
             row('Data dir', 'Путь для top-level data: в YAML.', dataDirInput),
             row('ffmpeg', 'Top-level ffmpeg path для videochannel.', ffmpegInput),
             row('Debug', 'Включает подробные логи.', E('label', { style: 'display:flex;gap:8px;align-items:center;' }, [ debugCheck, E('span', {}, 'debug: true') ]))
