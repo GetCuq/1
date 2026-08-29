@@ -3,7 +3,7 @@
   "app_version": "2026.05.22.1",
   "app_revision": "9de282c",
   "binary_revision": "f706819",
-  "binary_date": "2026.08.28",
+  "binary_date": "2026.08.29",
   "binary_sha256": {
     "arm64": "988bc1d7776c1e3a508af9367bdf0e9a0208e8e41223e392a01c64c3931a0f1d",
     "amd64": "f4179127571bbab451b6cb794758523bb790483b66ba7b250fde62bcd83d200a"
